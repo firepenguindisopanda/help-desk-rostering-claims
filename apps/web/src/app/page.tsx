@@ -1,30 +1,41 @@
 "use client";
 
-const TITLE_TEXT = `
- ██████╗ ███████╗████████╗████████╗███████╗██████╗
- ██╔══██╗██╔════╝╚══██╔══╝╚══██╔══╝██╔════╝██╔══██╗
- ██████╔╝█████╗     ██║      ██║   █████╗  ██████╔╝
- ██╔══██╗██╔══╝     ██║      ██║   ██╔══╝  ██╔══██╗
- ██████╔╝███████╗   ██║      ██║   ███████╗██║  ██║
- ╚═════╝ ╚══════╝   ╚═╝      ╚═╝   ╚══════╝╚═╝  ╚═╝
-
- ████████╗    ███████╗████████╗ █████╗  ██████╗██╗  ██╗
- ╚══██╔══╝    ██╔════╝╚══██╔══╝██╔══██╗██╔════╝██║ ██╔╝
-    ██║       ███████╗   ██║   ███████║██║     █████╔╝
-    ██║       ╚════██║   ██║   ██╔══██║██║     ██╔═██╗
-    ██║       ███████║   ██║   ██║  ██║╚██████╗██║  ██╗
-    ╚═╝       ╚══════╝   ╚═╝   ╚═╝  ╚═╝ ╚═════╝╚═╝  ╚═╝
- `;
+import { useEffect } from "react";
+import { useRouter } from "next/navigation";
+import { useAuth } from "@/lib/auth";
+// removed: UI imports no longer needed for redirect-only page
+import { routes } from "@/lib/routes";
 
 export default function Home() {
-	return (
-		<div className="container mx-auto max-w-3xl px-4 py-2">
-			<pre className="overflow-x-auto font-mono text-sm">{TITLE_TEXT}</pre>
-			<div className="grid gap-6">
-				<section className="rounded-lg border p-4">
-					<h2 className="mb-2 font-medium">API Status</h2>
-				</section>
+	const { user, loading } = useAuth();
+	const router = useRouter();
+
+	useEffect(() => {
+		if (loading) return;
+		if (!user) {
+			router.replace(routes.auth.login);
+			return;
+		}
+		// Redirect based on user role
+		if (user.role === "admin") {
+			router.replace(routes.admin.index);
+		} else if (user.role === "assistant") {
+			router.replace(routes.assist.index);
+		}
+	}, [user, loading, router]);
+
+	if (loading) {
+		return (
+			<div className="min-h-screen flex items-center justify-center">
+				<div className="animate-spin rounded-full h-32 w-32 border-b-2 border-gray-900"></div>
 			</div>
+		);
+	}
+
+	// This route always redirects based on auth; show a tiny spinner
+	return (
+		<div className="min-h-screen flex items-center justify-center">
+			<div className="animate-spin rounded-full h-12 w-12 border-2 border-b-transparent" />
 		</div>
 	);
 }
