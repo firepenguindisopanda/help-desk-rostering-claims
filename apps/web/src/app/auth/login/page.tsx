@@ -12,6 +12,7 @@ import { Eye, EyeOff } from "lucide-react";
 import { routes } from "@/lib/routes";
 
 import { Banner } from "@/components/ui/banner";
+import { FormErrorSummary } from "@/components/FormErrorSummary";
 
 export default function LoginPage() {
   const [username, setUsername] = useState("");
@@ -19,6 +20,7 @@ export default function LoginPage() {
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [fieldErrors, setFieldErrors] = useState<Record<string, unknown>>({});
   const [bannerState, setBannerState] = useState<{
     show: boolean;
     variant: 'pending' | 'rejected' | 'approved' | 'error';
@@ -32,6 +34,7 @@ export default function LoginPage() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
+    setFieldErrors({});
     setBannerState(null);
     setLoading(true);
 
@@ -75,8 +78,12 @@ export default function LoginPage() {
             
           case 'INVALID_CREDENTIALS':
           default:
-            // For invalid credentials or unknown errors, show inline error
-            setError(result.error || "Invalid username or password");
+            // For invalid credentials or unknown errors, check if we have field errors
+            if (result.errorDetails && typeof result.errorDetails === 'object') {
+              setFieldErrors(result.errorDetails);
+            } else {
+              setError(result.error || "Invalid username or password");
+            }
             break;
         }
       }
@@ -116,6 +123,8 @@ export default function LoginPage() {
           <h2 className="text-3xl md:text-4xl font-bold text-slate-800 text-center mb-2">Welcome Back</h2>
           <p className="text-slate-600 text-center text-base mb-6">Sign in to access your dashboard</p>
           
+          <FormErrorSummary errors={fieldErrors} />
+          
           {bannerState?.show && (
             <Banner
               variant={bannerState.variant}
@@ -151,6 +160,7 @@ export default function LoginPage() {
             <Label className="block text-slate-700 mb-2 text-base font-medium">ID Number</Label>
             <Input
               type="text"
+              name="username"
               className="w-full border rounded-lg px-4 py-3 text-base focus:ring-2 focus:ring-[#0066cc] focus:border-transparent"
               placeholder="Enter your ID number"
               value={username}
@@ -165,6 +175,7 @@ export default function LoginPage() {
             <div className="relative">
               <Input
                 type={showPassword ? "text" : "password"}
+                name="password"
                 className="w-full border rounded-lg px-4 py-3 pr-12 text-base focus:ring-2 focus:ring-[#0066cc] focus:border-transparent"
                 placeholder="Enter your password"
                 value={password}

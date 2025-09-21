@@ -1,5 +1,7 @@
 import { useState, useCallback } from 'react';
 import { toast } from 'sonner';
+import { apiFetch, HttpError } from '@/lib/apiClient';
+import { retryWithBackoff } from '@/lib/utils';
 
 // Types
 export interface StaffMember {
@@ -38,53 +40,31 @@ export function useScheduleAPI() {
   const generateSchedule = useCallback(async (startDate: string, endDate: string): Promise<ScheduleData> => {
     setLoading(true);
     try {
-      // TODO: Replace with actual API call
-      const response = await fetch('/api/schedule/generate', {
+      const res = await apiFetch<{ schedule: ScheduleData }>(`/admin/schedule/generate`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ start_date: startDate, end_date: endDate })
       });
-      
-      if (!response.ok) {
-        throw new Error('Failed to generate schedule');
+      toast.success(res.message ?? 'Schedule generated');
+      setSchedule(res.data.schedule);
+      return res.data.schedule;
+    } catch (e) {
+      if (e instanceof HttpError) {
+        if (e.status === 422 || e.status === 400) {
+          toast.warning(e.message);
+        } else if (e.status >= 500) {
+          toast.error('Could not generate schedule. Retrying…');
+          const retried = await retryWithBackoff(() => apiFetch<{ schedule: ScheduleData }>(`/admin/schedule/generate`, {
+            method: 'POST',
+            body: JSON.stringify({ start_date: startDate, end_date: endDate })
+          }));
+          toast.success(retried.message ?? 'Schedule generated');
+          setSchedule(retried.data.schedule);
+          return retried.data.schedule;
+        }
+      } else {
+        toast.error('Network error. Check your connection.');
       }
-      
-      const data = await response.json();
-      
-      if (data.status === 'success') {
-        setSchedule(data.schedule);
-        return data.schedule;
-      }
-      throw new Error(data.message || 'Failed to generate schedule');
-    } catch (error) {
-      console.error('Generate schedule error:', error);
-      
-      // Mock implementation for now
-      const timeSlots = ['09:00', '10:00', '11:00', '12:00', '13:00', '14:00', '15:00', '16:00', '17:00'];
-      const weekDays = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'];
-      
-      const shifts: ShiftAssignment[] = [];
-      weekDays.forEach(day => {
-        timeSlots.forEach(time => {
-          shifts.push({
-            id: `${day}-${time}`,
-            day,
-            time,
-            assistants: [],
-            maxStaff: 3
-          });
-        });
-      });
-
-      const mockSchedule: ScheduleData = {
-        startDate,
-        endDate,
-        shifts,
-        scheduleType: 'helpdesk'
-      };
-      
-      setSchedule(mockSchedule);
-      return mockSchedule;
+      throw e;
     } finally {
       setLoading(false);
     }
@@ -93,28 +73,18 @@ export function useScheduleAPI() {
   const saveSchedule = useCallback(async (scheduleData: ScheduleData): Promise<void> => {
     setLoading(true);
     try {
-      // TODO: Replace with actual API call
-      const response = await fetch('/api/schedule/save', {
+      await apiFetch(`/admin/schedule/save`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ schedule: scheduleData })
       });
-      
-      if (!response.ok) {
-        throw new Error('Failed to save schedule');
+      toast.success('Schedule saved successfully');
+    } catch (e) {
+      if (e instanceof HttpError && e.status === 409) {
+        toast.warning('Someone else changed this schedule. Please refresh.');
+      } else {
+        toast.error(e instanceof HttpError ? e.message : 'Save failed.');
       }
-      
-      const data = await response.json();
-      if (data.status !== 'success') {
-        throw new Error(data.message || 'Failed to save schedule');
-      }
-      
-      toast.success('Schedule saved successfully!');
-    } catch (error) {
-      console.error('Save schedule error:', error);
-      // Mock success for now
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      toast.success('Schedule saved successfully!');
+      throw e;
     } finally {
       setLoading(false);
     }
@@ -122,23 +92,12 @@ export function useScheduleAPI() {
 
   const clearSchedule = useCallback(async (): Promise<void> => {
     try {
-      // TODO: Replace with actual API call
-      const response = await fetch('/api/schedule/clear', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' }
-      });
-      
-      if (!response.ok) {
-        throw new Error('Failed to clear schedule');
-      }
-      
+      await apiFetch(`/admin/schedule/clear`, { method: 'POST' });
       setSchedule(null);
-      toast.success('Schedule cleared successfully!');
-    } catch (error) {
-      console.error('Clear schedule error:', error);
-      // Mock success for now
-      setSchedule(null);
-      toast.success('Schedule cleared successfully!');
+      toast.success('Schedule cleared successfully');
+    } catch (e) {
+      toast.error(e instanceof HttpError ? e.message : 'Failed to clear schedule');
+      throw e;
     }
   }, []);
 
@@ -200,70 +159,35 @@ export function useStaffAvailability() {
     }
 
     try {
-      // TODO: Replace with actual API call
-      const response = await fetch(`/api/staff/check-availability?staffId=${staffId}&day=${day}&time=${time}`);
-      
-      if (!response.ok) {
-        throw new Error('Failed to check availability');
-      }
-      
-      const data = await response.json();
-      const isAvailable = data.isAvailable;
-      
-      // Cache the result
-      setAvailabilityCache(prev => ({ ...prev, [cacheKey]: isAvailable }));
-      
-      return isAvailable;
-    } catch (error) {
-      console.error('Check availability error:', error);
-      // Mock random availability for now
-      const isAvailable = Math.random() > 0.3; // 70% chance of being available
+      const { data } = await apiFetch<{ staff_id: string; day: string; time: string; is_available: boolean }>(
+        `/admin/schedule/staff/check-availability?staff_id=${encodeURIComponent(staffId)}&day=${encodeURIComponent(day)}&time=${encodeURIComponent(time)}`
+      );
+      const isAvailable = data.is_available;
       setAvailabilityCache(prev => ({ ...prev, [cacheKey]: isAvailable }));
       return isAvailable;
+    } catch (e) {
+      toast.error('Could not check availability');
+      throw e;
     }
   }, [availabilityCache]);
 
   const batchCheckAvailability = useCallback(async (queries: AvailabilityQuery[]): Promise<Record<string, boolean>> => {
     setLoading(true);
     try {
-      // TODO: Replace with actual API call
-      const response = await fetch('/api/staff/check-availability/batch', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ queries })
-      });
-      
-      if (!response.ok) {
-        throw new Error('Failed to batch check availability');
-      }
-      
-      const data = await response.json();
+      const { data } = await apiFetch<{ results: Array<{ staff_id: string; day: string; time: string; is_available: boolean }> }>(
+        `/admin/schedule/staff/check-availability/batch`,
+        { method: 'POST', body: JSON.stringify({ queries: queries.map(q => ({ staff_id: q.staffId, day: q.day, time: q.time })) }) }
+      );
       const results: Record<string, boolean> = {};
-      
-      if (data.status === 'success') {
-        data.results.forEach((result: any) => {
-          const cacheKey = `${result.staff_id}-${result.day}-${result.time}`;
-          results[cacheKey] = result.is_available;
-        });
-        
-        // Update cache
-        setAvailabilityCache(prev => ({ ...prev, ...results }));
-        
-        return results;
-      }
-      
-      throw new Error(data.message || 'Failed to batch check availability');
-    } catch (error) {
-      console.error('Batch check availability error:', error);
-      // Mock batch results for now
-      const results: Record<string, boolean> = {};
-      queries.forEach(query => {
-        const cacheKey = `${query.staffId}-${query.day}-${query.time}`;
-        results[cacheKey] = Math.random() > 0.3; // 70% chance of being available
+      data.results.forEach((result) => {
+        const cacheKey = `${result.staff_id}-${result.day}-${result.time}`;
+        results[cacheKey] = result.is_available;
       });
-      
       setAvailabilityCache(prev => ({ ...prev, ...results }));
       return results;
+    } catch (e) {
+      toast.error('Could not load availability. Cells will remain droppable.');
+      throw e;
     } finally {
       setLoading(false);
     }
@@ -296,46 +220,13 @@ export function useStaffSearch() {
   const searchAvailableStaff = useCallback(async (day: string, time: string, searchTerm: string = ''): Promise<StaffMember[]> => {
     setLoading(true);
     try {
-      // TODO: Replace with actual API call
-      const params = new URLSearchParams({
-        day,
-        time,
-        search: searchTerm
-      });
-      
-      const response = await fetch(`/api/staff/available?${params}`);
-      
-      if (!response.ok) {
-        throw new Error('Failed to fetch available staff');
-      }
-      
-      const data = await response.json();
-      
-      if (data.status === 'success') {
-        setAvailableStaff(data.staff);
-        return data.staff;
-      }
-      
-      throw new Error(data.message || 'Failed to fetch available staff');
-    } catch (error) {
-      console.error('Search available staff error:', error);
-      // Mock staff data for now
-      const mockStaff: StaffMember[] = [
-        { id: '1', name: 'Alice Johnson', email: 'alice@example.com' },
-        { id: '2', name: 'Bob Smith', email: 'bob@example.com' },
-        { id: '3', name: 'Carol Davis', email: 'carol@example.com' },
-        { id: '4', name: 'David Wilson', email: 'david@example.com' },
-        { id: '5', name: 'Emma Brown', email: 'emma@example.com' },
-        { id: '6', name: 'Frank Miller', email: 'frank@example.com' },
-        { id: '7', name: 'Grace Lee', email: 'grace@example.com' }
-      ].filter(staff => 
-        searchTerm === '' || 
-        staff.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        staff.email.toLowerCase().includes(searchTerm.toLowerCase())
-      );
-      
-      setAvailableStaff(mockStaff);
-      return mockStaff;
+      const params = new URLSearchParams({ day, time, search: searchTerm });
+      const { data } = await apiFetch<{ staff: StaffMember[] }>(`/admin/schedule/staff/available?${params.toString()}`);
+      setAvailableStaff(data.staff);
+      return data.staff;
+    } catch (e) {
+      toast.error('Failed to fetch available staff');
+      throw e;
     } finally {
       setLoading(false);
     }

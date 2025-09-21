@@ -4,7 +4,6 @@
  */
 
 import type { 
-  ApiResponse,
   GenerateScheduleRequest,
   GenerateScheduleResponse,
   CurrentScheduleResponse,
@@ -24,11 +23,11 @@ import type {
 } from '@/types/schedule';
 
 import { ScheduleApiError } from '@/types/schedule';
+import { apiFetch, HttpError } from '@/lib/apiClient';
 
 // Configuration
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080';
-const API_VERSION = 'v2';
-const SCHEDULE_ENDPOINT = `/api/${API_VERSION}/admin/schedule`;
+
+const SCHEDULE_ENDPOINT = `/admin/schedule`;
 
 // Retry configuration
 const RETRY_CONFIG = {
@@ -42,118 +41,34 @@ const RETRY_CONFIG = {
 const REQUEST_TIMEOUT = 30000; // 30 seconds
 
 /**
- * Enhanced fetch with timeout, retry logic, and error handling
+ * uses the centralized apiFetch from apiClient.ts
  */
 class ApiClient {
-  private readonly baseUrl: string;
-  private readonly defaultHeaders: HeadersInit;
-
-  constructor(baseUrl: string = API_BASE_URL) {
-    this.baseUrl = baseUrl;
-    this.defaultHeaders = {
-      'Content-Type': 'application/json',
-    };
-  }
-
-  /**
-   * Get JWT token from storage or auth context
-   */
-  private getAuthToken(): string | null {
-    try {
-      // Reuse api.ts cookie reader to ensure consistency
-      const { getToken } = require('@/lib/api');
-      return getToken();
-    } catch {
-      return null;
-    }
-  }
-
-  /**
-   * Create request headers with authentication
-   */
-  private createHeaders(additionalHeaders: HeadersInit = {}): HeadersInit {
-    const headers: HeadersInit = { ...this.defaultHeaders, ...additionalHeaders };
-    
-    const token = this.getAuthToken();
-    if (token) {
-      (headers as Record<string, string>)['Authorization'] = `Bearer ${token}`;
-    }
-
-    return headers;
-  }
 
   /**
    * Enhanced fetch with timeout and retry logic
    */
-  private async fetchWithRetry<T>(
-    url: string,
-    options: RequestInit = {},
-    attempt: number = 1
-  ): Promise<T> {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT);
-
+  private async fetchWithRetry<T>(url: string, options: RequestInit = {}, attempt: number = 1): Promise<T> {
     try {
-      const response = await fetch(url, {
-        ...options,
-        headers: this.createHeaders(options.headers),
-        signal: controller.signal,
-      });
-
-      clearTimeout(timeoutId);
-
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        throw new ScheduleApiError(
-          errorData.message || `HTTP ${response.status}: ${response.statusText}`,
-          response.status,
-          errorData.errors
-        );
-      }
-
-      const data: ApiResponse<T> = await response.json();
-      
-      if (!data.success) {
-        throw new ScheduleApiError(
-          data.message || 'API request failed',
-          response.status,
-          data.errors
-        );
-      }
-
-      return data.data as T;
+      const res = await apiFetch<T>(url, options);
+      return res.data;
     } catch (error) {
-      clearTimeout(timeoutId);
-
-      // Don't retry on client errors (4xx) or auth failures
-      if (error instanceof ScheduleApiError && error.statusCode < 500) {
-        throw error;
+      if (error instanceof HttpError && error.status < 500) {
+        throw new ScheduleApiError(error.message, error.status, (error.body as any)?.errors);
       }
-
-      // Retry on network errors or server errors
       if (attempt < RETRY_CONFIG.maxAttempts) {
         const delay = Math.min(
           RETRY_CONFIG.baseDelay * Math.pow(RETRY_CONFIG.backoffFactor, attempt - 1),
           RETRY_CONFIG.maxDelay
         );
-
         console.warn(`API request failed, retrying in ${delay}ms (attempt ${attempt}/${RETRY_CONFIG.maxAttempts})`);
-        
-        await new Promise(resolve => setTimeout(resolve, delay));
+        await new Promise(r => setTimeout(r, delay));
         return this.fetchWithRetry<T>(url, options, attempt + 1);
       }
-
-      // Log final error
-      this.logError('API Request Failed', {
-        url,
-        method: options.method || 'GET',
-        attempt,
-        error: error instanceof Error ? error.message : String(error),
-      });
-
-      throw error instanceof ScheduleApiError 
-        ? error 
-        : this.createNetworkError(error);
+      if (error instanceof HttpError) {
+        throw new ScheduleApiError(error.message, error.status, (error.body as any)?.errors);
+      }
+      throw this.createNetworkError(error);
     }
   }
 
@@ -182,41 +97,42 @@ class ApiClient {
    * GET request
    */
   async get<T>(endpoint: string, params?: Record<string, string>): Promise<T> {
-    const url = new URL(`${this.baseUrl}${endpoint}`);
+    let url = endpoint;
     if (params) {
-      Object.entries(params).forEach(([key, value]) => {
-        url.searchParams.append(key, value);
-      });
+      const searchParams = new URLSearchParams(params);
+      url = `${endpoint}?${searchParams.toString()}`;
     }
 
-    return this.fetchWithRetry<T>(url.toString(), { method: 'GET' });
+    return this.fetchWithRetry<T>(url, { method: 'GET' });
   }
 
   /**
    * POST request
    */
   async post<T>(endpoint: string, data?: any): Promise<T> {
-    return this.fetchWithRetry<T>(`${this.baseUrl}${endpoint}`, {
+    const options: RequestInit = { 
       method: 'POST',
-      body: data ? JSON.stringify(data) : undefined,
-    });
+      ...(data ? { body: JSON.stringify(data) } : {})
+    };
+    return this.fetchWithRetry<T>(endpoint, options);
   }
 
   /**
    * PUT request
    */
   async put<T>(endpoint: string, data?: any): Promise<T> {
-    return this.fetchWithRetry<T>(`${this.baseUrl}${endpoint}`, {
+    const options: RequestInit = { 
       method: 'PUT',
-      body: data ? JSON.stringify(data) : undefined,
-    });
+      ...(data ? { body: JSON.stringify(data) } : {})
+    };
+    return this.fetchWithRetry<T>(endpoint, options);
   }
 
   /**
    * DELETE request
    */
   async delete<T>(endpoint: string): Promise<T> {
-    return this.fetchWithRetry<T>(`${this.baseUrl}${endpoint}`, { method: 'DELETE' });
+    return this.fetchWithRetry<T>(endpoint, { method: 'DELETE' });
   }
 }
 
@@ -327,15 +243,28 @@ export class ScheduleApiService {
    * Export schedule as PDF
    */
   async exportSchedulePDF(format: string = 'standard'): Promise<Blob> {
-    const response = await fetch(`${API_BASE_URL}${SCHEDULE_ENDPOINT}/export/pdf?format=${format}`, {
-      headers: this.client['createHeaders'](),
-    });
+    const endpoint = `${SCHEDULE_ENDPOINT}/export/pdf?format=${format}`;
+    
+    try {
+      const res = await apiFetch<Blob>(endpoint, { method: 'GET' });
+      // For blob responses, we need to handle this differently
+      // Since apiFetch expects JSON, we'll use direct fetch for blob responses
+      const response = await fetch(endpoint, {
+        method: 'GET',
+        credentials: 'include',
+      });
 
-    if (!response.ok) {
-      throw new ScheduleApiError(`Failed to export PDF: ${response.statusText}`, response.status);
+      if (!response.ok) {
+        throw new ScheduleApiError(`Failed to export PDF: ${response.statusText}`, response.status);
+      }
+
+      return response.blob();
+    } catch (error) {
+      if (error instanceof HttpError) {
+        throw new ScheduleApiError(error.message, error.status, (error.body as any)?.errors);
+      }
+      throw new ScheduleApiError(`Failed to export PDF: ${error}`, 500);
     }
-
-    return response.blob();
   }
 
   /**

@@ -492,7 +492,7 @@ export default function AdminSchedulePage() {
                   <Button
                     onClick={handleSimpleGenerateSchedule}
                     disabled={!startDate || !endDate || simpleLoading}
-                    className="bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700"
+                    className="bg-blue-600 hover:bg-blue-700 text-white"
                   >
                     {simpleLoading ? (
                       <>
@@ -521,7 +521,7 @@ export default function AdminSchedulePage() {
                         variant="destructive"
                         onClick={() => setShowClearModal(true)}
                         disabled={scheduleManager.clearSchedule.isPending}
-                        className="bg-gradient-to-r from-red-500 to-pink-600 hover:from-red-600 hover:to-pink-700"
+                        className="bg-red-600 hover:bg-red-700 text-white"
                       >
                         <Trash2 className="h-4 w-4 mr-2" />
                         Clear
@@ -530,7 +530,7 @@ export default function AdminSchedulePage() {
                         variant="outline"
                         onClick={handleSaveSchedule}
                         disabled={scheduleManager.saveSchedule.isPending}
-                        className="bg-gradient-to-r from-green-500 to-teal-600 hover:from-green-600 hover:to-teal-700 text-white border-0"
+                        className="bg-green-600 hover:bg-green-700 text-white border-0"
                       >
                         <Save className="h-4 w-4 mr-2" />
                         {scheduleManager.saveSchedule.isPending ? "Saving..." : "Save"}
@@ -539,7 +539,7 @@ export default function AdminSchedulePage() {
                         variant="outline"
                         onClick={handleDownloadPDF}
                         disabled={scheduleManager.exportPDF.isPending}
-                        className="bg-gradient-to-r from-purple-500 to-indigo-600 hover:from-purple-600 hover:to-indigo-700 text-white border-0"
+                        className="bg-purple-600 hover:bg-purple-700 text-white border-0"
                       >
                         <Download className="h-4 w-4 mr-2" />
                         {scheduleManager.exportPDF.isPending ? "Exporting..." : "PDF"}

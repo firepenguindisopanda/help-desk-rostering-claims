@@ -252,21 +252,21 @@ export async function getCourses() {
 }
 
 // Updated register function to support FormData
-export async function registerAssistant(formData: FormData): Promise<{ success: boolean; error?: string; message?: string }> {
+export async function registerAssistant(formData: FormData): Promise<{ success: boolean; error?: string; message?: string; errors?: Record<string, unknown> }> {
   try {
     const res = await fetch(`${API_BASE_URL}/auth/register`, {
       method: "POST",
-      body: formData, // Don't set Content-Type header for FormData
+      body: formData,
       headers: {
         ...(getToken() ? { Authorization: `Bearer ${getToken()}` } : {}),
       },
-      credentials: "include", // Changed to include credentials
+      credentials: "include",
     });
     
     const data: any = await res.json().catch(() => ({}));
     if (!res.ok || data.success === false) {
       const message = data?.error || data?.message || "Registration failed";
-      return { success: false, error: message };
+      return { success: false, error: message, errors: data?.errors };
     }
     
     return { 
@@ -284,7 +284,7 @@ import axios from 'axios';
 export async function registerAssistantWithProgress(
   formData: FormData, 
   onUploadProgress?: (progressEvent: { loaded: number; total?: number; progress?: number }) => void
-): Promise<{ success: boolean; error?: string; message?: string }> {
+): Promise<{ success: boolean; error?: string; message?: string; errors?: Record<string, unknown> }> {
   try {
     const response = await axios.post(`${API_BASE_URL}/auth/register`, formData, {
       headers: {
@@ -308,7 +308,7 @@ export async function registerAssistantWithProgress(
     const data = response.data;
     if (response.status >= 400 || data.success === false) {
       const message = data?.error || data?.message || "Registration failed";
-      return { success: false, error: message };
+      return { success: false, error: message, errors: data?.errors };
     }
     
     return { 
@@ -317,7 +317,8 @@ export async function registerAssistantWithProgress(
     };
   } catch (error: any) {
     const message = error.response?.data?.error || error.response?.data?.message || error.message || "Network error";
-    return { success: false, error: message };
+    const errors = error.response?.data?.errors;
+    return { success: false, error: message, errors };
   }
 }
 

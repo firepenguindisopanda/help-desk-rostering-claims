@@ -26,6 +26,7 @@ import { registrationSchema } from "@/lib/validation/registration-schema";
 import { toast } from "sonner";
 import { useRegisterAssistantWithProgressMutation } from "@/hooks/registration";
 import type { RegistrationFormData } from "@/types/registration";
+import { FormErrorSummary } from "@/components/FormErrorSummary";
 
 export default function RegisterPage() {
   const [formData, setFormData] = useState<RegistrationFormData>({
@@ -46,7 +47,7 @@ export default function RegisterPage() {
   
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
-  const [errors, setErrors] = useState<Record<string, string>>({});
+  const [errors, setErrors] = useState<Record<string, string | string[]>>({});
   const [uploadProgress, setUploadProgress] = useState(0);
   
   const router = useRouter();
@@ -135,6 +136,14 @@ export default function RegisterPage() {
         toast.success(result.message || "Registration successful!");
         router.push('/auth/login?message=registration-pending');
       } else {
+        // Map backend field errors if provided
+        if (result.errors && typeof result.errors === 'object') {
+          const mapped: Record<string, string | string[]> = {};
+          for (const [k, v] of Object.entries(result.errors)) {
+            mapped[k] = Array.isArray(v) ? v : String(v);
+          }
+          setErrors(mapped);
+        }
         toast.error(result.error || "Registration failed");
       }
     } catch (error) {
@@ -156,6 +165,7 @@ export default function RegisterPage() {
         </div>
         
         <form onSubmit={handleSubmit} className="space-y-8">
+          <FormErrorSummary errors={errors} />
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
             {/* Left Column - Personal Information */}
             <div className="space-y-6">
@@ -165,7 +175,7 @@ export default function RegisterPage() {
               
               <ProfilePictureUpload 
                 onFileSelect={(file) => handleInputChange('profile_picture', file)}
-                error={errors.profile_picture}
+                error={Array.isArray(errors.profile_picture) ? errors.profile_picture.join(', ') : errors.profile_picture}
               />
               
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -173,6 +183,7 @@ export default function RegisterPage() {
                   <Label htmlFor="student_id" className="text-base font-medium">Student ID *</Label>
                   <Input
                     id="student_id"
+                    name="student_id"
                     type="text"
                     placeholder="Enter your student ID"
                     className="text-base py-3"
@@ -211,8 +222,9 @@ export default function RegisterPage() {
               
               <div className="space-y-2">
                 <Label htmlFor="name" className="text-base font-medium">Full Name *</Label>
-                <Input
+                  <Input
                   id="name"
+                    name="name"
                   type="text"
                   placeholder="Enter your full name"
                   className="text-base py-3"
@@ -230,6 +242,7 @@ export default function RegisterPage() {
                   <Label htmlFor="email">Email *</Label>
                   <Input
                     id="email"
+                    name="email"
                     type="email"
                     placeholder="Enter your email"
                     value={formData.email}
@@ -245,6 +258,7 @@ export default function RegisterPage() {
                   <Label htmlFor="phone">Phone Number *</Label>
                   <Input
                     id="phone"
+                    name="phone"
                     type="tel"
                     placeholder="Enter your phone number"
                     value={formData.phone}
@@ -262,6 +276,7 @@ export default function RegisterPage() {
                 <div className="relative">
                   <Input
                     id="password"
+                    name="password"
                     type={showPassword ? "text" : "password"}
                     placeholder="Create a password"
                     value={formData.password}
@@ -293,6 +308,7 @@ export default function RegisterPage() {
                 <div className="relative">
                   <Input
                     id="confirm_password"
+                    name="confirm_password"
                     type={showConfirmPassword ? "text" : "password"}
                     placeholder="Confirm your password"
                     value={formData.confirm_password}
@@ -329,13 +345,13 @@ export default function RegisterPage() {
               <CourseSelection
                 selectedCourses={formData.courses}
                 onCoursesChange={(courses) => handleInputChange('courses', courses)}
-                error={errors.courses}
+                error={Array.isArray(errors.courses) ? errors.courses.join(', ') : errors.courses}
               />
               
               <AvailabilityCalendar
                 selectedSlots={formData.availability}
                 onSlotsChange={(slots) => handleInputChange('availability', slots)}
-                error={errors.availability}
+                error={Array.isArray(errors.availability) ? errors.availability.join(', ') : errors.availability}
               />
             </div>
           </div>
@@ -344,7 +360,7 @@ export default function RegisterPage() {
           <div className="space-y-6 border-t pt-6">
             <TranscriptUpload
               onFileSelect={(file) => handleInputChange('transcript', file)}
-              error={errors.transcript}
+              error={Array.isArray(errors.transcript) ? errors.transcript.join(', ') : errors.transcript}
             />
             
             <div className="space-y-2">
