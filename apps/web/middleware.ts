@@ -1,15 +1,33 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
-import { isAdminRoute, isAssistRoute, isStudentRoute, routes } from "@/lib/routes";
 import { jwtVerify, createRemoteJWKSet } from "jose";
 
 // Configurable values
-const COOKIE_NAME = process.env.NEXT_PUBLIC_AUTH_COOKIE_NAME || "auth_token";
+const COOKIE_NAME = process.env.NEXT_PUBLIC_AUTH_COOKIE_NAME || "access_token";
 const JWT_ALG = (process.env.JWT_ALG || "HS256").toUpperCase();
 const JWT_SECRET = process.env.JWT_SECRET;
 const JWT_JWKS_URL = process.env.JWT_JWKS_URL; // Prefer JWKS for RS256
 const AUTH_MODE = (process.env.NEXT_PUBLIC_AUTH_MODE || "").toLowerCase();
 const AUTH_DEV_ROLE = (process.env.NEXT_PUBLIC_AUTH_DEV_ROLE || "assistant").toLowerCase();
+
+// Local route helpers to keep middleware edge-compatible (no external imports)
+const routes = {
+  root: "/",
+  unauthorized: "/unauthorized",
+  auth: { login: "/auth/login", register: "/auth/register" },
+};
+
+function isAdminRoute(pathname: string): boolean {
+  return pathname === "/admin" || pathname.startsWith("/admin/");
+}
+
+function isAssistRoute(pathname: string): boolean {
+  return pathname === "/assist" || pathname.startsWith("/assist/");
+}
+
+function isStudentRoute(pathname: string): boolean {
+  return pathname === "/student" || pathname.startsWith("/student/");
+}
 
 async function verifyToken(token: string): Promise<{ role?: string; type?: string; is_admin?: boolean } | null> {
   try {
