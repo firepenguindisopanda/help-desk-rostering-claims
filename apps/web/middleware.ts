@@ -49,6 +49,19 @@ async function verifyToken(token: string): Promise<{ role?: string; type?: strin
 export async function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;
 
+  // Skip middleware for static files and manifest
+  if (
+    pathname.startsWith('/_next') ||
+    pathname.startsWith('/favicon') ||
+    pathname.startsWith('/images') ||
+    pathname === '/manifest.webmanifest' ||
+    pathname === '/robots.txt' ||
+    pathname === '/sitemap.xml' ||
+    pathname.includes('.')
+  ) {
+    return NextResponse.next();
+  }
+
   // Only protect admin, student, and assist routes
   if (!(isAdminRoute(pathname) || isAssistRoute(pathname) || isStudentRoute(pathname))) {
     return NextResponse.next();
