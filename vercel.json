@@ -21,11 +21,6 @@
       "dest": "/$1"
     }
   ],
-  "functions": {
-    "apps/web/src/app/api/session/route.ts": {
-      "maxDuration": 30
-    }
-  },
   "env": {
     "NODE_ENV": "production"
   },
