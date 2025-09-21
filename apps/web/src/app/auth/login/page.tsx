@@ -11,12 +11,20 @@ import Image from "next/image";
 import { Eye, EyeOff } from "lucide-react";
 import { routes } from "@/lib/routes";
 
+import { Banner } from "@/components/ui/banner";
+
 export default function LoginPage() {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [bannerState, setBannerState] = useState<{
+    show: boolean;
+    variant: 'pending' | 'rejected' | 'approved' | 'error';
+    message: string;
+    details?: any;
+  } | null>(null);
   
   const { login } = useAuth();
   const router = useRouter();
@@ -24,6 +32,7 @@ export default function LoginPage() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
+    setBannerState(null);
     setLoading(true);
 
     try {
@@ -33,7 +42,43 @@ export default function LoginPage() {
         // Redirect based on user role (this will be handled by the auth provider)
         router.push(routes.root);
       } else {
-        setError(result.error || "Login failed");
+        // Handle different error codes based on registration state
+        const errorCode = result.errorCode;
+        
+        switch (errorCode) {
+          case 'REG_PENDING':
+            setBannerState({
+              show: true,
+              variant: 'pending',
+              message: 'Your registration is pending review. You\'ll be notified once approved.',
+              details: result.errorDetails
+            });
+            break;
+            
+          case 'REG_REJECTED':
+            setBannerState({
+              show: true,
+              variant: 'rejected',
+              message: 'Your registration was rejected.',
+              details: result.errorDetails
+            });
+            break;
+            
+          case 'REG_APPROVED_NOT_PROVISIONED':
+            setBannerState({
+              show: true,
+              variant: 'approved',
+              message: 'Approved, provisioning in progress. Please try again shortly.',
+              details: result.errorDetails
+            });
+            break;
+            
+          case 'INVALID_CREDENTIALS':
+          default:
+            // For invalid credentials or unknown errors, show inline error
+            setError(result.error || "Invalid username or password");
+            break;
+        }
       }
     } catch (err) {
       console.error("Login submit error", err);
@@ -70,6 +115,31 @@ export default function LoginPage() {
         <form onSubmit={handleSubmit} className="bg-white p-8 md:p-10 rounded-xl shadow-lg w-full max-w-md space-y-6">
           <h2 className="text-3xl md:text-4xl font-bold text-slate-800 text-center mb-2">Welcome Back</h2>
           <p className="text-slate-600 text-center text-base mb-6">Sign in to access your dashboard</p>
+          
+          {bannerState?.show && (
+            <Banner
+              variant={bannerState.variant}
+              message={bannerState.message}
+              onClose={() => setBannerState(null)}
+            >
+              {bannerState.variant === 'rejected' && (
+                <div className="space-y-2">
+                  <p>Contact support if you think this is a mistake.</p>
+                  <Link 
+                    href={routes.auth.register} 
+                    className="inline-block font-medium hover:underline"
+                  >
+                    Resubmit registration →
+                  </Link>
+                </div>
+              )}
+              {bannerState.variant === 'pending' && bannerState.details?.requested_at && (
+                <p className="text-sm opacity-75">
+                  Requested: {new Date(bannerState.details.requested_at).toLocaleDateString()}
+                </p>
+              )}
+            </Banner>
+          )}
           
           {error && (
             <div className="p-3 text-sm text-red-600 bg-red-50 border border-red-200 rounded-md">

@@ -8,7 +8,7 @@ export type ApiResponse<T> = {
 };
 
 const API_BASE_URL = (process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:5000/api/v2").replace(/\/$/, "");
-const COOKIE_NAME = process.env.NEXT_PUBLIC_AUTH_COOKIE_NAME || "auth_token";
+const COOKIE_NAME = process.env.NEXT_PUBLIC_AUTH_COOKIE_NAME || "access_token"; // Changed to match backend expectation
 
 function getCookie(name: string): string | null {
   if (typeof document === "undefined") return null;
@@ -34,15 +34,20 @@ function deleteCookie(name: string) {
 }
 
 export function getToken(): string | null {
-  return getCookie(COOKIE_NAME);
+  // Prefer access_token, but also check legacy name auth_token
+  return getCookie('access_token') || getCookie(COOKIE_NAME) || getCookie('auth_token');
 }
 
 export function storeToken(token: string) {
   setCookie(COOKIE_NAME, token);
+  // Also set the access_token cookie that the backend expects
+  setCookie("access_token", token);
 }
 
 export function clearToken() {
   deleteCookie(COOKIE_NAME);
+  // Also clear the access_token cookie
+  deleteCookie("access_token");
 }
 
 export async function apiFetch<T>(path: string, init: RequestInit = {}): Promise<Response> {
@@ -65,11 +70,64 @@ export async function apiFetch<T>(path: string, init: RequestInit = {}): Promise
   return fetch(url, {
     ...init,
     headers,
-    credentials: "omit",
+    credentials: "include", // Changed from "omit" to include cookies
   });
 }
 
-// Auth API
+// Extended error response type for login
+export type LoginError = {
+  code?: 'INVALID_CREDENTIALS' | 'REG_PENDING' | 'REG_REJECTED' | 'REG_APPROVED_NOT_PROVISIONED';
+  requested_at?: string;
+  reviewed_at?: string;
+  reviewed_by?: string;
+};
+
+export type LoginResponse = {
+  success: boolean;
+  token?: string;
+  error?: string;
+  user?: any;
+  errorCode?: LoginError['code'];
+  errorDetails?: LoginError;
+};
+
+// Enhanced login with registration state handling
+export async function loginV2(username: string, password: string): Promise<LoginResponse> {
+  try {
+    const res = await apiFetch<ApiResponse<{ token: string; user: any }>>("/auth/login", {
+      method: "POST",
+      body: JSON.stringify({ username, password }),
+    });
+    const data: any = await res.json().catch(() => ({}));
+    
+    if (!res.ok || data.success === false) {
+      const message = data?.message || "Login failed";
+      const errorCode = data?.errors?.code as LoginError['code'];
+      const errorDetails: LoginError = {
+        code: errorCode,
+        requested_at: data?.errors?.requested_at,
+        reviewed_at: data?.errors?.reviewed_at,
+        reviewed_by: data?.errors?.reviewed_by,
+      };
+      
+      return { 
+        success: false, 
+        error: message, 
+        errorCode,
+        errorDetails 
+      };
+    }
+    
+    const token = data?.token || data?.data?.token;
+    const user = data?.user || data?.data?.user;
+    if (token) storeToken(token);
+    return { success: true, token, user };
+  } catch {
+    return { success: false, error: "Network error" };
+  }
+}
+
+// Legacy login function for backward compatibility
 export async function login(username: string, password: string): Promise<{ success: boolean; token?: string; error?: string; user?: any }> {
   try {
     const res = await apiFetch<ApiResponse<{ token: string }>>("/auth/login", {
@@ -116,6 +174,8 @@ export async function logout(): Promise<void> {
   } catch {}
   finally {
     clearToken();
+    // Best-effort clearing of legacy cookie as well
+    deleteCookie('auth_token');
   }
 }
 
@@ -200,7 +260,7 @@ export async function registerAssistant(formData: FormData): Promise<{ success: 
       headers: {
         ...(getToken() ? { Authorization: `Bearer ${getToken()}` } : {}),
       },
-      credentials: "omit",
+      credentials: "include", // Changed to include credentials
     });
     
     const data: any = await res.json().catch(() => ({}));
@@ -267,6 +327,7 @@ export const ApiV2 = {
   storeToken,
   clearToken,
   login,
+  loginV2,
   register,
   registerAssistant,
   registerAssistantWithProgress,

@@ -19,16 +19,22 @@ export async function POST(request: NextRequest) {
     const data = await response.json();
 
     if (!response.ok || !data.success) {
+      // Pass through error details for registration state handling
       return NextResponse.json(
-        { success: false, message: data.message || 'Login failed' },
+        { 
+          success: false, 
+          message: data.message || 'Login failed',
+          errors: data.errors,
+        },
         { status: response.status }
       );
     }
 
-    // Store token in HttpOnly cookie
+    // Store token in cookies
     const token = data.data?.token;
     if (token) {
       const cookieStore = await cookies();
+      // 1) HttpOnly cookie for server-side use if needed
       cookieStore.set('auth_token', token, {
         httpOnly: true,
         secure: process.env.NODE_ENV === 'production',
@@ -36,12 +42,21 @@ export async function POST(request: NextRequest) {
         maxAge: 60 * 60 * 24 * 7, // 7 days
         path: '/',
       });
+      // 2) Readable cookie for client to attach Authorization header on cross-origin requests
+      cookieStore.set('access_token', token, {
+        httpOnly: false,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'lax',
+        maxAge: 60 * 60 * 24 * 7, // 7 days
+        path: '/',
+      });
     }
 
-    // Return user data (without token)
+    // Return user data and token so client can persist as well
     return NextResponse.json({
       success: true,
       user: data.data?.user || data.user,
+      token,
     });
   } catch (error) {
     console.error('Login API error:', error);
@@ -73,8 +88,9 @@ export async function DELETE() {
       }
     }
 
-    // Clear the auth cookie
-    cookieStore.delete('auth_token');
+  // Clear the auth cookies
+  cookieStore.delete('auth_token');
+  cookieStore.delete('access_token');
 
     return NextResponse.json({ success: true });
   } catch (error) {

@@ -6,7 +6,13 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { Select } from "@/components/ui/select";
+import {
+  Select,
+  SelectTrigger,
+  SelectValue,
+  SelectContent,
+  SelectItem,
+} from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Progress } from "@/components/ui/progress";
 import { ProfilePictureUpload } from "@/components/profile-picture-upload";
@@ -182,15 +188,20 @@ export default function RegisterPage() {
                 <div className="space-y-2">
                   <Label htmlFor="degree" className="text-base font-medium">Degree *</Label>
                   <Select
-                    id="degree"
                     value={formData.degree}
-                    className="text-base py-3"
-                    onChange={(e) => handleInputChange("degree", e.target.value as "BSc" | "MSc" | "PhD")}
+                    onValueChange={(value) =>
+                      handleInputChange("degree", value as "BSc" | "MSc" | "PhD")
+                    }
                     disabled={isSubmitting}
                   >
-                    <option value="BSc">Bachelor of Science (BSc)</option>
-                    <option value="MSc">Master of Science (MSc)</option>
-                    <option value="PhD">Doctor of Philosophy (PhD)</option>
+                    <SelectTrigger id="degree" className="text-base py-3">
+                      <SelectValue placeholder="Select your degree" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="BSc">Bachelor of Science (BSc)</SelectItem>
+                      <SelectItem value="MSc">Master of Science (MSc)</SelectItem>
+                      <SelectItem value="PhD">Doctor of Philosophy (PhD)</SelectItem>
+                    </SelectContent>
                   </Select>
                   {errors.degree && (
                     <p className="text-sm text-red-600 dark:text-red-400">{errors.degree}</p>

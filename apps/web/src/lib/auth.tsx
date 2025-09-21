@@ -12,7 +12,7 @@ type User = {
 type AuthState = {
   user: User | null;
   loading: boolean;
-  login: (username: string, password: string) => Promise<{ success: boolean; error?: string }>;
+  login: (username: string, password: string) => Promise<{ success: boolean; error?: string; errorCode?: string; errorDetails?: any }>;
   register: (email: string, password: string, name: string) => Promise<{ success: boolean; error?: string }>;
   logout: () => Promise<void>;
   hasRole: (role: string) => boolean;
@@ -57,32 +57,65 @@ export function AuthProvider({ children }: { readonly children: React.ReactNode 
       setUser(normalizeUser(me));
     };
 
+    const handleMockAuth = () => {
+      if (mounted) {
+        setUser({
+          id: "mock-user",
+          email: "mock@example.com",
+          name: "Mock User",
+          role: AUTH_DEV_ROLE,
+        });
+        setLoading(false);
+      }
+    };
+
+    const handleNoToken = () => {
+      if (mounted) {
+        setUser(null);
+        setLoading(false);
+      }
+    };
+
+    const clearInvalidToken = async () => {
+      try {
+        const { clearToken } = await import('./api');
+        clearToken();
+      } catch {}
+    };
+
     async function bootstrap() {
       if (AUTH_MODE === "mock") {
-        if (mounted) {
-          setUser({
-            id: "mock-user",
-            email: "mock@example.com",
-            name: "Mock User",
-            role: AUTH_DEV_ROLE,
-          });
-          setLoading(false);
-        }
+        handleMockAuth();
         return;
       }
 
       try {
-        // Check if user is authenticated via cookie by calling /me endpoint
+        // First check if we have a token - avoid unnecessary API calls
+        const { getToken } = await import('./api');
+        const token = getToken();
+        
+        if (!token) {
+          handleNoToken();
+          return;
+        }
+
+        // Token exists, verify it's valid by calling /me endpoint
         const result = await ApiV2.getMe();
         if (!mounted) return;
+        
         if (result.success && result.user) {
           setUserFromMe(result.user);
         } else {
+          // Token is invalid/expired, clear it
+          await clearInvalidToken();
           setUser(null);
         }
       } catch (error) {
         console.error("Auth bootstrap error:", error);
-        if (mounted) setUser(null);
+        if (mounted) {
+          setUser(null);
+          await clearInvalidToken();
+        }
       } finally {
         if (mounted) setLoading(false);
       }
@@ -113,7 +146,26 @@ export function AuthProvider({ children }: { readonly children: React.ReactNode 
       const data = await response.json();
       
       if (!response.ok || !data.success) {
-        return { success: false, error: data.message || "Login failed" };
+        // Extract error code and details for registration state handling
+        const errorCode = data.errors?.code;
+        const errorDetails = data.errors;
+        
+        return { 
+          success: false, 
+          error: data.message || "Login failed",
+          errorCode,
+          errorDetails 
+        };
+      }
+
+      // Persist token on client as well so api.ts can attach Authorization header
+      if (data.token) {
+        try {
+          const { storeToken } = await import('./api');
+          storeToken(data.token);
+        } catch (e) {
+          console.warn('Failed to persist token on client:', e);
+        }
       }
 
       if (data.user) {
@@ -153,15 +205,22 @@ export function AuthProvider({ children }: { readonly children: React.ReactNode 
       setUser(null);
       return;
     }
+    
+    // Clear client-side state immediately for better UX
+    setUser(null);
+    
     try {
-      // Use new session API for logout
+      // Clear client-side tokens first
+      const { clearToken } = await import('./api');
+      clearToken();
+      
+      // Then call server logout (non-blocking)
       await fetch('/api/session', {
         method: 'DELETE',
       });
     } catch (error) {
       console.error("Logout error:", error);
-    } finally {
-      setUser(null);
+      // User is already logged out client-side, so this is non-critical
     }
   }
 
