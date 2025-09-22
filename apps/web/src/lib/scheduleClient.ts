@@ -50,7 +50,9 @@ export class ScheduleHttpError extends Error {
  * Enhanced API fetch for v2 endpoints with proper error handling
  */
 async function apiV2Fetch<T>(url: string, init?: RequestInit): Promise<{ success: true; data: T; message?: string }> {
-  const fullUrl = url.startsWith('/api/v2') ? url : `/api/v2${url}`;
+  // Rely on api.ts API_BASE_URL which already includes '/api/v2'.
+  // Only ensure the path starts with a single '/'.
+  const fullUrl = url.startsWith('/') ? url : `/${url}`;
   
   try {
     const response = await apiFetch<ApiResponse<T>>(fullUrl, {

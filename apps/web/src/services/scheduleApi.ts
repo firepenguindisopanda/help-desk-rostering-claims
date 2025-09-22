@@ -24,6 +24,7 @@ import type {
 
 import { ScheduleApiError } from '@/types/schedule';
 import { apiFetch, HttpError } from '@/lib/apiClient';
+import { apiFetch as apiFetchRaw } from '@/lib/api';
 
 // Configuration
 
@@ -244,27 +245,11 @@ export class ScheduleApiService {
    */
   async exportSchedulePDF(format: string = 'standard'): Promise<Blob> {
     const endpoint = `${SCHEDULE_ENDPOINT}/export/pdf?format=${format}`;
-    
-    try {
-      const res = await apiFetch<Blob>(endpoint, { method: 'GET' });
-      // For blob responses, we need to handle this differently
-      // Since apiFetch expects JSON, we'll use direct fetch for blob responses
-      const response = await fetch(endpoint, {
-        method: 'GET',
-        credentials: 'include',
-      });
-
-      if (!response.ok) {
-        throw new ScheduleApiError(`Failed to export PDF: ${response.statusText}`, response.status);
-      }
-
-      return response.blob();
-    } catch (error) {
-      if (error instanceof HttpError) {
-        throw new ScheduleApiError(error.message, error.status, (error.body as any)?.errors);
-      }
-      throw new ScheduleApiError(`Failed to export PDF: ${error}`, 500);
+    const response = await apiFetchRaw(endpoint, { method: 'GET' });
+    if (!response.ok) {
+      throw new ScheduleApiError(`Failed to export PDF: ${response.statusText}`, response.status);
     }
+    return response.blob();
   }
 
   /**

@@ -34,7 +34,7 @@ import type { Schedule } from '@/lib/scheduleClient';
 
 // Import existing components
 import { ScheduleGenerationForm } from "@/components/ScheduleGenerationForm";
-import { ScheduleGrid, EmptyScheduleState, ScheduleLoadingState, ScheduleErrorState } from '@/components/ScheduleGrid';
+import { EmptyScheduleState, ScheduleLoadingState, ScheduleErrorState } from '@/components/ScheduleGrid';
 
 import { 
   useScheduleManagement, 
@@ -75,6 +75,7 @@ function ScheduleCell(props: Readonly<ScheduleCellProps>) {
     onDragStart, 
     draggedStaff 
   } = props;
+  
   
   const assistants = shift?.assistants || [];
   const maxStaff = shift?.max_staff || 3;
@@ -404,9 +405,56 @@ export default function AdminSchedulePage() {
   };
 
   const getShiftByDayTime = (day: string, time: string) => {
-    return schedule?.schedule?.days
-      ?.find(d => d.day === day)
-      ?.shifts.find(s => s.time === time);
+    // Convert time format from '09:00' to '09:00 AM to 10:00 AM' format
+    const convertTimeToRange = (time: string) => {
+      const hour = parseInt(time.split(':')[0]);
+      const nextHour = hour + 1;
+      
+      // Convert to 12-hour format with AM/PM
+      const formatHour = (h: number) => {
+        if (h === 0) return '12:00 AM';
+        if (h < 12) return `${h.toString().padStart(2, '0')}:00 AM`;
+        if (h === 12) return '12:00 PM';
+        return `${(h - 12).toString().padStart(2, '0')}:00 PM`;
+      };
+      
+      return `${formatHour(hour)} to ${formatHour(nextHour)}`;
+    };
+    
+    const expectedTimeRange = convertTimeToRange(time);
+    
+    // Check advanced schedule first
+    if (schedule?.schedule?.days) {
+      const foundShift = schedule.schedule.days
+        ?.find(d => d.day === day)
+        ?.shifts.find(s => s.time === expectedTimeRange);
+      
+      
+      
+      return foundShift;
+    }
+    
+    // Check simple schedule
+    if (simpleSchedule?.days) {
+      const dayData = simpleSchedule.days.find(d => d.name === day);
+      const shiftData = dayData?.shifts.find(s => s.time === expectedTimeRange);
+      
+      if (shiftData) {
+        return {
+          shift_id: 0,
+          time: shiftData.time,
+          assistants: shiftData.assistants.map(assistant => ({
+            id: assistant.id,
+            name: assistant.name,
+            email: '',
+          })),
+          max_staff: 3,
+          cell_id: `${day}-${time}`,
+        };
+      }
+    }
+    
+    return undefined;
   };
 
   // Helper function to render schedule content
@@ -424,20 +472,8 @@ export default function AdminSchedulePage() {
       );
     }
     
-    if (simpleSchedule) {
-      return (
-        <Card>
-          <CardHeader>
-            <CardTitle>Generated Schedule</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <ScheduleGrid schedule={simpleSchedule} />
-          </CardContent>
-        </Card>
-      );
-    }
-    
-    if (!schedule) {
+    // Show empty state when no schedule exists (neither simple nor advanced)
+    if (!schedule && !simpleSchedule) {
       return <EmptyScheduleState />;
     }
     
@@ -554,8 +590,8 @@ export default function AdminSchedulePage() {
           {/* Schedule Content */}
           {renderScheduleContent()}
 
-          {/* Existing Schedule Table */}
-          {schedule && (
+          {/* Weekly Schedule Table */}
+          {(schedule || simpleSchedule) && (
             <Card>
               <CardHeader>
                 <CardTitle>Weekly Schedule (Advanced)</CardTitle>

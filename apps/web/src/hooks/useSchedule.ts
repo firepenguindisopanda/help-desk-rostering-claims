@@ -1,6 +1,7 @@
 import { useState, useCallback } from 'react';
 import { toast } from 'sonner';
-import { apiFetch, HttpError } from '@/lib/apiClient';
+import { apiFetch as apiFetchRaw } from '@/lib/api';
+import { scheduleApi } from '@/services/scheduleApi';
 import { retryWithBackoff } from '@/lib/utils';
 
 // Types
@@ -40,26 +41,44 @@ export function useScheduleAPI() {
   const generateSchedule = useCallback(async (startDate: string, endDate: string): Promise<ScheduleData> => {
     setLoading(true);
     try {
-      const res = await apiFetch<{ schedule: ScheduleData }>(`/admin/schedule/generate`, {
+      const res = await apiFetchRaw(`/admin/schedule/generate`, {
         method: 'POST',
         body: JSON.stringify({ start_date: startDate, end_date: endDate })
       });
-      toast.success(res.message ?? 'Schedule generated');
-      setSchedule(res.data.schedule);
-      return res.data.schedule;
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok || body?.success === false) {
+        const err: any = new Error(body?.message || 'Failed to generate schedule');
+        err.status = res.status;
+        throw err;
+      }
+      const scheduleData: ScheduleData = body?.data?.schedule || body?.schedule || body?.data;
+      toast.success(body?.message || 'Schedule generated');
+      setSchedule(scheduleData);
+      return scheduleData;
     } catch (e) {
-      if (e instanceof HttpError) {
-        if (e.status === 422 || e.status === 400) {
-          toast.warning(e.message);
-        } else if (e.status >= 500) {
+      const anyErr: any = e as any;
+      if (typeof anyErr?.status === 'number') {
+        if (anyErr.status === 422 || anyErr.status === 400) {
+          toast.warning(anyErr.message);
+        } else if (anyErr.status >= 500) {
           toast.error('Could not generate schedule. Retrying…');
-          const retried = await retryWithBackoff(() => apiFetch<{ schedule: ScheduleData }>(`/admin/schedule/generate`, {
-            method: 'POST',
-            body: JSON.stringify({ start_date: startDate, end_date: endDate })
-          }));
-          toast.success(retried.message ?? 'Schedule generated');
-          setSchedule(retried.data.schedule);
-          return retried.data.schedule;
+          const retried = await retryWithBackoff(async () => {
+            const r = await apiFetchRaw(`/admin/schedule/generate`, {
+              method: 'POST',
+              body: JSON.stringify({ start_date: startDate, end_date: endDate })
+            });
+            const b = await r.json().catch(() => ({}));
+            if (!r.ok || b?.success === false) {
+              const err: any = new Error(b?.message || 'Failed to generate schedule');
+              err.status = r.status;
+              throw err;
+            }
+            return b;
+          });
+          const scheduleData2: ScheduleData = retried?.data?.schedule || retried?.schedule || retried?.data;
+          toast.success(retried?.message || 'Schedule generated');
+          setSchedule(scheduleData2);
+          return scheduleData2;
         }
       } else {
         toast.error('Network error. Check your connection.');
@@ -73,17 +92,21 @@ export function useScheduleAPI() {
   const saveSchedule = useCallback(async (scheduleData: ScheduleData): Promise<void> => {
     setLoading(true);
     try {
-      await apiFetch(`/admin/schedule/save`, {
+      const res = await apiFetchRaw(`/admin/schedule/save`, {
         method: 'POST',
         body: JSON.stringify({ schedule: scheduleData })
       });
+      if (!res.ok) {
+        const b = await res.json().catch(() => ({}));
+        const err: any = new Error(b?.message || 'Save failed.');
+        err.status = res.status;
+        throw err;
+      }
       toast.success('Schedule saved successfully');
     } catch (e) {
-      if (e instanceof HttpError && e.status === 409) {
-        toast.warning('Someone else changed this schedule. Please refresh.');
-      } else {
-        toast.error(e instanceof HttpError ? e.message : 'Save failed.');
-      }
+      const anyErr: any = e as any;
+      if (anyErr?.status === 409) toast.warning('Someone else changed this schedule. Please refresh.');
+      else toast.error(anyErr?.message || 'Save failed.');
       throw e;
     } finally {
       setLoading(false);
@@ -92,29 +115,25 @@ export function useScheduleAPI() {
 
   const clearSchedule = useCallback(async (): Promise<void> => {
     try {
-      await apiFetch(`/admin/schedule/clear`, { method: 'POST' });
+      const res = await apiFetchRaw(`/admin/schedule/clear`, { method: 'POST' });
+      if (!res.ok) {
+        const b = await res.json().catch(() => ({}));
+        const err: any = new Error(b?.message || 'Failed to clear schedule');
+        err.status = res.status;
+        throw err;
+      }
       setSchedule(null);
       toast.success('Schedule cleared successfully');
     } catch (e) {
-      toast.error(e instanceof HttpError ? e.message : 'Failed to clear schedule');
+      const anyErr: any = e as any;
+      toast.error(anyErr?.message || 'Failed to clear schedule');
       throw e;
     }
   }, []);
 
   const downloadPDF = useCallback(async (scheduleData: ScheduleData): Promise<void> => {
     try {
-      // TODO: Replace with actual API call
-      const response = await fetch('/api/schedule/pdf', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ schedule: scheduleData })
-      });
-      
-      if (!response.ok) {
-        throw new Error('Failed to generate PDF');
-      }
-      
-      const blob = await response.blob();
+      const blob = await scheduleApi.exportSchedulePDF('standard');
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
@@ -123,14 +142,11 @@ export function useScheduleAPI() {
       a.click();
       window.URL.revokeObjectURL(url);
       document.body.removeChild(a);
-      
       toast.success('Schedule downloaded as PDF!');
-    } catch (error) {
+    } catch (error: any) {
       console.error('Download PDF error:', error);
-      // Mock success for now
-      toast.info('PDF download started...');
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      toast.success('Schedule downloaded as PDF!');
+      toast.error(error?.message || 'Failed to export PDF');
+      throw error;
     }
   }, []);
 
@@ -159,10 +175,12 @@ export function useStaffAvailability() {
     }
 
     try {
-      const { data } = await apiFetch<{ staff_id: string; day: string; time: string; is_available: boolean }>(
+      const res = await apiFetchRaw(
         `/admin/schedule/staff/check-availability?staff_id=${encodeURIComponent(staffId)}&day=${encodeURIComponent(day)}&time=${encodeURIComponent(time)}`
       );
-      const isAvailable = data.is_available;
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok || body?.success === false) throw new Error(body?.message || 'Failed');
+      const isAvailable = body?.data?.is_available ?? body?.is_available;
       setAvailabilityCache(prev => ({ ...prev, [cacheKey]: isAvailable }));
       return isAvailable;
     } catch (e) {
@@ -174,12 +192,14 @@ export function useStaffAvailability() {
   const batchCheckAvailability = useCallback(async (queries: AvailabilityQuery[]): Promise<Record<string, boolean>> => {
     setLoading(true);
     try {
-      const { data } = await apiFetch<{ results: Array<{ staff_id: string; day: string; time: string; is_available: boolean }> }>(
+      const res = await apiFetchRaw(
         `/admin/schedule/staff/check-availability/batch`,
         { method: 'POST', body: JSON.stringify({ queries: queries.map(q => ({ staff_id: q.staffId, day: q.day, time: q.time })) }) }
       );
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok || body?.success === false) throw new Error(body?.message || 'Failed');
       const results: Record<string, boolean> = {};
-      data.results.forEach((result) => {
+      (body?.data?.results || body?.results || []).forEach((result: any) => {
         const cacheKey = `${result.staff_id}-${result.day}-${result.time}`;
         results[cacheKey] = result.is_available;
       });
@@ -220,10 +240,13 @@ export function useStaffSearch() {
   const searchAvailableStaff = useCallback(async (day: string, time: string, searchTerm: string = ''): Promise<StaffMember[]> => {
     setLoading(true);
     try {
-      const params = new URLSearchParams({ day, time, search: searchTerm });
-      const { data } = await apiFetch<{ staff: StaffMember[] }>(`/admin/schedule/staff/available?${params.toString()}`);
-      setAvailableStaff(data.staff);
-      return data.staff;
+  const params = new URLSearchParams({ day, time, search: searchTerm });
+  const res = await apiFetchRaw(`/admin/schedule/staff/available?${params.toString()}`);
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok || body?.success === false) throw new Error(body?.message || 'Failed to fetch available staff');
+  const staff = body?.data?.staff || body?.staff || [];
+  setAvailableStaff(staff);
+  return staff;
     } catch (e) {
       toast.error('Failed to fetch available staff');
       throw e;

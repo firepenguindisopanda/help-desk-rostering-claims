@@ -115,26 +115,42 @@ function formatTime(time: string): string {
  */
 export function EmptyScheduleState() {
   return (
-    <div className="text-center py-12">
-      <div className="text-muted-foreground mb-4">
-        <svg
-          className="mx-auto h-12 w-12 mb-4"
-          fill="none"
-          viewBox="0 0 24 24"
-          stroke="currentColor"
-        >
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            strokeWidth={1}
-            d="M8 7V3a1 1 0 011-1h6a1 1 0 011 1v4M8 7h8M8 7l-3 9h14l-3-9"
-          />
-        </svg>
-        No schedule generated yet
+    <div className="text-center py-16">
+      <div className="max-w-md mx-auto">
+        <div className="text-muted-foreground mb-6">
+          <svg
+            className="mx-auto h-16 w-16 mb-4 text-blue-300"
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+          >
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={1.5}
+              d="M8 7V3a1 1 0 011-1h6a1 1 0 011 1v4M8 7h8M8 7l-3 9h14l-3-9"
+            />
+          </svg>
+          <h3 className="text-lg font-medium text-foreground mb-2">No Schedule Available</h3>
+          <p className="text-sm text-muted-foreground mb-4">
+            Get started by creating your first schedule for the help desk.
+          </p>
+        </div>
+        
+        <div className="bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 rounded-lg p-4">
+          <div className="flex items-center justify-center gap-2 text-blue-700 dark:text-blue-300 text-sm font-medium mb-2">
+            <svg className="h-4 w-4" fill="currentColor" viewBox="0 0 20 20">
+              <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" />
+            </svg>
+            How to get started
+          </div>
+          <ol className="text-left space-y-1 text-sm text-blue-700 dark:text-blue-300">
+            <li>1. Select your start and end dates above</li>
+            <li>2. Click the blue "Generate Schedule" button</li>
+            <li>3. Review and customize staff assignments</li>
+          </ol>
+        </div>
       </div>
-      <p className="text-sm text-muted-foreground">
-        Select dates and click "Generate Schedule" to create a new schedule.
-      </p>
     </div>
   );
 }
