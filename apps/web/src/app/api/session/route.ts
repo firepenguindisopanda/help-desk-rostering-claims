@@ -1,14 +1,17 @@
 import { cookies } from 'next/headers';
 import { NextRequest, NextResponse } from 'next/server';
 
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE || 'http://localhost:8080';
+const API_BASE_URL = (process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:5000/api/v2').replace(/\/$/, '');
+
+const LOGIN_URL = `${API_BASE_URL}/auth/login`;
+const LOGOUT_URL = `${API_BASE_URL}/auth/logout`;
 
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
     
     // Proxy login request to Flask API
-    const response = await fetch(`${API_BASE}/api/v2/auth/login`, {
+    const response = await fetch(LOGIN_URL, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -31,7 +34,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Store token in cookies
-    const token = data.data?.token;
+  const token = data.data?.token || data.token;
     if (token) {
       const cookieStore = await cookies();
       // 1) HttpOnly cookie for server-side use if needed
@@ -75,7 +78,7 @@ export async function DELETE() {
     // Optional: Call Flask logout endpoint
     if (token) {
       try {
-        await fetch(`${API_BASE}/api/v2/auth/logout`, {
+        await fetch(LOGOUT_URL, {
           method: 'POST',
           headers: {
             'Authorization': `Bearer ${token}`,

@@ -3,6 +3,9 @@ import { Geist, Geist_Mono } from "next/font/google";
 import "../index.css";
 import Providers from "@/components/providers";
 import ConditionalHeader from "@/components/conditional-header";
+import { NextSSRPlugin } from "@uploadthing/react/next-ssr-plugin";
+import { extractRouterConfig } from "uploadthing/server";
+import { ourFileRouter } from "@/app/api/uploadthing/core";
 
 const geistSans = Geist({
 	variable: "--font-geist-sans",
@@ -29,6 +32,9 @@ export default function RootLayout({
 			<body
 				className={`${geistSans.variable} ${geistMono.variable} antialiased`}
 			>
+				<NextSSRPlugin
+					routerConfig={extractRouterConfig(ourFileRouter)}
+				/>
 				<Providers>
 					<div className="grid grid-rows-[auto_1fr] h-svh">
 						<ConditionalHeader />

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -22,42 +22,177 @@ import { CourseSelection } from "@/components/course-selection";
 import Link from "next/link";
 import { Eye, EyeOff, UserPlus } from "lucide-react";
 import { routes } from "@/lib/routes";
-import { registrationSchema } from "@/lib/validation/registration-schema";
+import { registrationSchema, registrationSchemaCore, registrationSchemaFields } from "@/lib/validation/registration-schema";
 import { toast } from "sonner";
 import { useRegisterAssistantWithProgressMutation } from "@/hooks/registration";
 import type { RegistrationFormData } from "@/types/registration";
 import { FormErrorSummary } from "@/components/FormErrorSummary";
+import { uploadFilesSecurely } from "@/lib/secure-upload";
+import { PasswordStrengthMeter } from "@/components/password-strength-meter";
+import type { ZodTypeAny } from "zod";
+
+const REGISTRATION_DRAFT_STORAGE_KEY = "help-desk-registration-draft";
+const STORAGE_SAVE_DELAY_MS = 400;
+const FIELD_VALIDATION_DELAY_MS = 250;
+
+const REGISTRATION_FIELD_SCHEMAS = registrationSchemaFields as Record<keyof RegistrationFormData, ZodTypeAny>;
+
+const createInitialFormData = (): RegistrationFormData => ({
+  student_id: "",
+  name: "",
+  email: "",
+  phone: "",
+  degree: "BSc",
+  password: "",
+  confirm_password: "",
+  reason: "",
+  terms: false,
+  courses: [],
+  availability: [],
+  profile_picture: null,
+  transcript: null,
+});
+
+const extractPersistableData = (data: RegistrationFormData) => ({
+  student_id: data.student_id,
+  name: data.name,
+  email: data.email,
+  phone: data.phone,
+  degree: data.degree,
+  reason: data.reason,
+  terms: data.terms,
+  courses: data.courses,
+  availability: data.availability,
+});
+
+type RegistrationMutationResult = {
+  success: boolean;
+  message?: string;
+  error?: string;
+  errors?: Record<string, unknown> | null;
+};
 
 export default function RegisterPage() {
-  const [formData, setFormData] = useState<RegistrationFormData>({
-    student_id: "",
-    name: "",
-    email: "",
-    phone: "",
-    degree: "BSc",
-    password: "",
-    confirm_password: "",
-    reason: "",
-    terms: false,
-    courses: [],
-    availability: [],
-    profile_picture: null,
-    transcript: null,
-  });
+  const [formData, setFormData] = useState<RegistrationFormData>(() => createInitialFormData());
   
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [errors, setErrors] = useState<Record<string, string | string[]>>({});
   const [uploadProgress, setUploadProgress] = useState(0);
+  const [hasHydrated, setHasHydrated] = useState(false);
+  const formDataRef = useRef(formData);
+  const validationTimers = useRef<Partial<Record<keyof RegistrationFormData, number>>>({});
   
   const router = useRouter();
   const { mutateAsync: registerAssistant, isPending: isSubmitting } = useRegisterAssistantWithProgressMutation();
 
+  useEffect(() => {
+    formDataRef.current = formData;
+  }, [formData]);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || hasHydrated) return;
+    const stored = window.localStorage.getItem(REGISTRATION_DRAFT_STORAGE_KEY);
+    if (stored) {
+      try {
+        const parsed = JSON.parse(stored) as Partial<RegistrationFormData>;
+        setFormData(prev => {
+          const next = {
+            ...prev,
+            ...parsed,
+            courses: Array.isArray(parsed?.courses) ? parsed.courses : prev.courses,
+            availability: Array.isArray(parsed?.availability) ? parsed.availability : prev.availability,
+          };
+          formDataRef.current = next;
+          return next;
+        });
+      } catch (error) {
+        console.warn("Failed to hydrate registration draft", error);
+      }
+    }
+    setHasHydrated(true);
+  }, [hasHydrated]);
+
+  useEffect(() => {
+    if (!hasHydrated || typeof window === "undefined") return;
+    const timeoutId = window.setTimeout(() => {
+      try {
+        const payload = extractPersistableData(formDataRef.current);
+        window.localStorage.setItem(REGISTRATION_DRAFT_STORAGE_KEY, JSON.stringify(payload));
+      } catch (error) {
+        console.warn("Failed to persist registration draft", error);
+      }
+    }, STORAGE_SAVE_DELAY_MS);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [formData, hasHydrated]);
+
+  useEffect(() => () => {
+    if (typeof window === "undefined") return;
+    Object.values(validationTimers.current).forEach(timer => {
+      if (timer) {
+        window.clearTimeout(timer);
+      }
+    });
+  }, []);
+
+  const runValidationForField = useCallback((field: keyof RegistrationFormData, data?: RegistrationFormData) => {
+    const currentData = data ?? formDataRef.current;
+    const schema = REGISTRATION_FIELD_SCHEMAS[field];
+    let message: string | null = null;
+
+    if (schema && typeof (schema as ZodTypeAny).safeParse === "function") {
+      const result = (schema as ZodTypeAny).safeParse(currentData[field]);
+      if (!result.success) {
+        message = result.error.issues[0]?.message ?? "Invalid value";
+      }
+    }
+
+    if (field === "confirm_password" && currentData.confirm_password) {
+      if (currentData.password !== currentData.confirm_password) {
+        message = "Passwords don't match";
+      }
+    }
+
+    setErrors(prev => {
+      const next = { ...prev };
+      if (message) {
+        next[field] = message;
+      } else {
+        delete next[field];
+      }
+      return next;
+    });
+
+    return !message;
+  }, []);
+
+  const scheduleFieldValidation = useCallback((field: keyof RegistrationFormData) => {
+    if (typeof window === "undefined") return;
+    const timers = validationTimers.current;
+    const existing = timers[field];
+    if (existing) {
+      window.clearTimeout(existing);
+    }
+    timers[field] = window.setTimeout(() => {
+      runValidationForField(field);
+      delete timers[field];
+    }, FIELD_VALIDATION_DELAY_MS);
+  }, [runValidationForField]);
+
+  const handleFieldBlur = useCallback((field: keyof RegistrationFormData) => {
+    scheduleFieldValidation(field);
+  }, [scheduleFieldValidation]);
+
   const handleInputChange = (field: keyof RegistrationFormData, value: any) => {
-    setFormData(prev => ({
-      ...prev,
-      [field]: value
-    }));
+    setFormData(prev => {
+      const next = {
+        ...prev,
+        [field]: value,
+      };
+      formDataRef.current = next;
+      return next;
+    });
     
     // Clear error for this field when user starts typing
     if (errors[field]) {
@@ -67,88 +202,179 @@ export default function RegisterPage() {
         return newErrors;
       });
     }
-  };
 
-  const validateForm = () => {
-    try {
-      registrationSchema.parse(formData);
-      setErrors({});
-      return true;
-    } catch (error: any) {
-      const validationErrors: Record<string, string> = {};
-      error.errors?.forEach((err: any) => {
-        const path = err.path[0];
-        if (path) {
-          validationErrors[path] = err.message;
-        }
-      });
-      setErrors(validationErrors);
-      return false;
+    if (field === "password" && formDataRef.current.confirm_password) {
+      runValidationForField("confirm_password");
     }
   };
 
+  /**
+   * Runs zod validation and maps field errors.
+   * Returns an object with success flag and ordered list of error entries
+   * so we can provide richer user feedback.
+   */
+  const validateForm = useCallback((): { success: true } | { success: false; errorEntries: [string, string][] } => {
+    const currentData = formDataRef.current;
+    try {
+      registrationSchema.parse(currentData);
+      setErrors({});
+      return { success: true };
+    } catch (error: any) {
+      const validationErrors: Record<string, string | string[]> = {};
+      error.errors?.forEach((err: any) => {
+        const rawPath = Array.isArray(err.path) && err.path.length ? err.path[0] : undefined;
+        let path = typeof rawPath === "string" && rawPath.length > 0 ? rawPath : undefined;
+
+        if (!path && typeof err.message === "string") {
+          const lowerMessage = err.message.toLowerCase();
+          if (lowerMessage.includes("profile picture")) {
+            path = "profile_picture";
+          } else if (lowerMessage.includes("transcript")) {
+            path = "transcript";
+          } else if (lowerMessage.includes("password") && lowerMessage.includes("match")) {
+            path = "confirm_password";
+          }
+        }
+
+        path = path ?? "form";
+
+        const existing = validationErrors[path];
+        if (!existing) {
+          validationErrors[path] = err.message;
+        } else if (Array.isArray(existing)) {
+          validationErrors[path] = [...existing, err.message];
+        } else if (existing !== err.message) {
+          validationErrors[path] = [existing, err.message];
+        }
+      });
+      setErrors(validationErrors);
+      return {
+        success: false,
+        errorEntries: Object.entries(validationErrors).map(([field, detail]) => [
+          field,
+          Array.isArray(detail) ? detail.join(", ") : detail,
+        ]) as [string, string][],
+      };
+    }
+  }, []);
+
+  const focusAndAnnounceErrors = useCallback((errorEntries: [string, string][]) => {
+    if (errorEntries.length > 0) {
+      const [firstField] = errorEntries[0];
+      const el = document.querySelector(`[name="${firstField}"]`) as HTMLElement | null;
+      if (el) {
+        setTimeout(() => {
+          el.focus();
+          el.scrollIntoView({ behavior: "smooth", block: "center" });
+        }, 10);
+      }
+    }
+
+    const maxShown = 3;
+    const summaryList = errorEntries.slice(0, maxShown).map(([field, msg]) => `${field}: ${msg}`);
+    const moreCount = Math.max(0, errorEntries.length - maxShown);
+    toast.error(
+      errorEntries.length === 1
+        ? `Fix the highlighted field: ${summaryList[0]}`
+        : `Found ${errorEntries.length} issues. ` +
+          summaryList.join(" | ") +
+          (moreCount > 0 ? ` | +${moreCount} more` : "")
+    );
+  }, []);
+
+  const uploadAssetsWithProgress = useCallback(async () => {
+    setUploadProgress(10);
+    const uploadResult = await uploadFilesSecurely(
+      formDataRef.current.profile_picture,
+      formDataRef.current.transcript,
+      (progress) => {
+        setUploadProgress(10 + progress * 0.5);
+      }
+    );
+
+    if (!uploadResult.success) {
+      toast.error(`File upload failed: ${uploadResult.error}`);
+      setUploadProgress(0);
+      return null;
+    }
+
+    setUploadProgress(70);
+    return uploadResult;
+  }, []);
+
+  const buildRegistrationPayload = useCallback((uploadResult: { profilePictureUrl?: string | null; transcriptUrl?: string | null }) => {
+    const currentData = formDataRef.current;
+    return {
+      student_id: currentData.student_id,
+      name: currentData.name,
+      email: currentData.email,
+      phone: currentData.phone,
+      degree: currentData.degree,
+      password: currentData.password,
+      confirm_password: currentData.confirm_password,
+      reason: currentData.reason,
+      terms: currentData.terms,
+      courses: currentData.courses,
+      availability: currentData.availability,
+      profile_picture_url: uploadResult.profilePictureUrl || "",
+      transcript_url: uploadResult.transcriptUrl || "",
+    };
+  }, []);
+
+  const handleRegistrationOutcome = useCallback((result: RegistrationMutationResult) => {
+    if (result.success) {
+      if (typeof window !== "undefined") {
+        window.localStorage.removeItem(REGISTRATION_DRAFT_STORAGE_KEY);
+      }
+      const resetData = createInitialFormData();
+      setFormData(resetData);
+      formDataRef.current = resetData;
+      toast.success(result.message || "Registration successful!");
+      router.push('/auth/login?message=registration-pending');
+      return;
+    }
+
+    if (result.errors && typeof result.errors === "object") {
+      const mapped: Record<string, string | string[]> = {};
+      for (const [k, v] of Object.entries(result.errors)) {
+        mapped[k] = Array.isArray(v) ? v : String(v);
+      }
+      setErrors(mapped);
+    }
+
+    toast.error(result.error || "Registration failed");
+  }, [router]);
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    
-    if (!validateForm()) {
-      toast.error("Please fix the errors in the form");
+
+    const validationResult = validateForm();
+    if (validationResult.success === false) {
+      focusAndAnnounceErrors(validationResult.errorEntries);
       return;
     }
 
     try {
-      const formDataToSend = new FormData();
-      
-      // Add text fields
-      formDataToSend.append('student_id', formData.student_id);
-      formDataToSend.append('name', formData.name);
-      formDataToSend.append('email', formData.email);
-      formDataToSend.append('phone', formData.phone);
-      formDataToSend.append('degree', formData.degree);
-      formDataToSend.append('password', formData.password);
-      formDataToSend.append('confirm_password', formData.confirm_password);
-      formDataToSend.append('reason', formData.reason);
-      formDataToSend.append('terms', formData.terms.toString());
-      
-      // Add courses array
-      formData.courses.forEach(course => {
-        formDataToSend.append('courses[]', course);
-      });
-      
-      // Add availability as JSON string
-      formDataToSend.append('availability', JSON.stringify(formData.availability));
-      
-      // Add files
-      if (formData.profile_picture) {
-        formDataToSend.append('profile_picture', formData.profile_picture);
+      const uploadResult = await uploadAssetsWithProgress();
+      if (!uploadResult) {
+        return;
       }
-      if (formData.transcript) {
-        formDataToSend.append('transcript', formData.transcript);
-      }
-      
+
+      const registrationData = buildRegistrationPayload(uploadResult);
+
+      setUploadProgress(80);
       const result = await registerAssistant({
-        formData: formDataToSend,
+        registrationData,
         onUploadProgress: (progressEvent) => {
-          setUploadProgress(progressEvent.progress || 0);
+          setUploadProgress(80 + ((progressEvent.progress || 0) * 0.2));
         }
       });
-      
-      if (result.success) {
-        toast.success(result.message || "Registration successful!");
-        router.push('/auth/login?message=registration-pending');
-      } else {
-        // Map backend field errors if provided
-        if (result.errors && typeof result.errors === 'object') {
-          const mapped: Record<string, string | string[]> = {};
-          for (const [k, v] of Object.entries(result.errors)) {
-            mapped[k] = Array.isArray(v) ? v : String(v);
-          }
-          setErrors(mapped);
-        }
-        toast.error(result.error || "Registration failed");
-      }
+
+      handleRegistrationOutcome(result);
     } catch (error) {
       console.error('Registration error:', error);
       toast.error("An unexpected error occurred");
+      setUploadProgress(0);
     }
   };
 
@@ -173,11 +399,12 @@ export default function RegisterPage() {
                 Personal Information
               </h2>
               
-              <ProfilePictureUpload 
-                onFileSelect={(file) => handleInputChange('profile_picture', file)}
-                error={Array.isArray(errors.profile_picture) ? errors.profile_picture.join(', ') : errors.profile_picture}
+              <ProfilePictureUpload
+                onFileChange={(file) => handleInputChange("profile_picture", file)}
+                error={Array.isArray(errors.profile_picture) ? errors.profile_picture.join(", ") : errors.profile_picture}
+                disabled={isSubmitting}
+                onBlur={() => handleFieldBlur("profile_picture")}
               />
-              
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <Label htmlFor="student_id" className="text-base font-medium">Student ID *</Label>
@@ -189,6 +416,7 @@ export default function RegisterPage() {
                     className="text-base py-3"
                     value={formData.student_id}
                     onChange={(e) => handleInputChange("student_id", e.target.value)}
+                    onBlur={() => handleFieldBlur("student_id")}
                     disabled={isSubmitting}
                   />
                   {errors.student_id && (
@@ -205,7 +433,11 @@ export default function RegisterPage() {
                     }
                     disabled={isSubmitting}
                   >
-                    <SelectTrigger id="degree" className="text-base py-3">
+                    <SelectTrigger
+                      id="degree"
+                      className="text-base py-3"
+                      onBlur={() => handleFieldBlur("degree")}
+                    >
                       <SelectValue placeholder="Select your degree" />
                     </SelectTrigger>
                     <SelectContent>
@@ -230,6 +462,7 @@ export default function RegisterPage() {
                   className="text-base py-3"
                   value={formData.name}
                   onChange={(e) => handleInputChange("name", e.target.value)}
+                  onBlur={() => handleFieldBlur("name")}
                   disabled={isSubmitting}
                 />
                 {errors.name && (
@@ -247,6 +480,7 @@ export default function RegisterPage() {
                     placeholder="Enter your email"
                     value={formData.email}
                     onChange={(e) => handleInputChange("email", e.target.value)}
+                    onBlur={() => handleFieldBlur("email")}
                     disabled={isSubmitting}
                   />
                   {errors.email && (
@@ -263,6 +497,7 @@ export default function RegisterPage() {
                     placeholder="Enter your phone number"
                     value={formData.phone}
                     onChange={(e) => handleInputChange("phone", e.target.value)}
+                    onBlur={() => handleFieldBlur("phone")}
                     disabled={isSubmitting}
                   />
                   {errors.phone && (
@@ -281,6 +516,7 @@ export default function RegisterPage() {
                     placeholder="Create a password"
                     value={formData.password}
                     onChange={(e) => handleInputChange("password", e.target.value)}
+                    onBlur={() => handleFieldBlur("password")}
                     disabled={isSubmitting}
                   />
                   <Button
@@ -298,6 +534,9 @@ export default function RegisterPage() {
                     )}
                   </Button>
                 </div>
+                {formData.password && (
+                  <PasswordStrengthMeter password={formData.password} className="mt-2" />
+                )}
                 {errors.password && (
                   <p className="text-sm text-red-600 dark:text-red-400">{errors.password}</p>
                 )}
@@ -313,6 +552,7 @@ export default function RegisterPage() {
                     placeholder="Confirm your password"
                     value={formData.confirm_password}
                     onChange={(e) => handleInputChange("confirm_password", e.target.value)}
+                    onBlur={() => handleFieldBlur("confirm_password")}
                     disabled={isSubmitting}
                   />
                   <Button
@@ -359,8 +599,10 @@ export default function RegisterPage() {
           {/* Bottom Section */}
           <div className="space-y-6 border-t pt-6">
             <TranscriptUpload
-              onFileSelect={(file) => handleInputChange('transcript', file)}
+              onFileChange={(file) => handleInputChange('transcript', file)}
               error={Array.isArray(errors.transcript) ? errors.transcript.join(', ') : errors.transcript}
+              disabled={isSubmitting}
+              onBlur={() => handleFieldBlur('transcript')}
             />
             
             <div className="space-y-2">
@@ -371,6 +613,7 @@ export default function RegisterPage() {
                 rows={4}
                 value={formData.reason}
                 onChange={(e) => handleInputChange("reason", e.target.value)}
+                onBlur={() => handleFieldBlur("reason")}
                 disabled={isSubmitting}
               />
               {errors.reason && (
@@ -383,6 +626,7 @@ export default function RegisterPage() {
                 id="terms"
                 checked={formData.terms}
                 onCheckedChange={(checked) => handleInputChange("terms", checked === true)}
+                onBlur={() => handleFieldBlur("terms")}
                 disabled={isSubmitting}
               />
               <Label htmlFor="terms" className="text-sm leading-relaxed">

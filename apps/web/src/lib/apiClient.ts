@@ -16,6 +16,21 @@ export class HttpError extends Error {
 }
 
 const API_BASE_URL = (process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:5000/api/v2").replace(/\/$/, "");
+const IS_DEV = process.env.NODE_ENV !== "production";
+
+function logDev(message: string, payload?: unknown) {
+  if (!IS_DEV) return;
+  if (payload === undefined) {
+    console.debug(message);
+    return;
+  }
+  console.debug(message, payload);
+}
+
+function logDevError(message: string, error: unknown) {
+  if (!IS_DEV) return;
+  console.error(message, error);
+}
 
 function defaultMessageForStatus(status: number): string {
   switch (status) {
@@ -52,22 +67,37 @@ function resolveUrl(input: RequestInfo | URL): string {
 export async function apiFetch<T>(input: RequestInfo | URL, init?: RequestInit): Promise<ApiSuccess<T>> {
   const token = getToken();
   const isFormData = typeof FormData !== "undefined" && init?.body instanceof FormData;
+  const url = resolveUrl(input);
+  const method = init?.method || "GET";
 
-  const res = await fetch(resolveUrl(input), {
-    ...init,
-    headers: {
-      ...(init?.headers || {}),
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      ...(!isFormData && init?.body ? { "Content-Type": "application/json" } : {}),
-    },
-    credentials: "include",
-  });
+  logDev(`[ApiClient] → ${method} ${url} | token: ${token ? 'present' : 'missing'}`);
+
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      ...init,
+      headers: {
+        ...(init?.headers || {}),
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...(!isFormData && init?.body ? { "Content-Type": "application/json" } : {}),
+      },
+      credentials: "include",
+    });
+  } catch (error) {
+    logDevError(`[ApiClient] ✖ Network failure for ${method} ${url}`, error);
+    throw error;
+  }
 
   let body: unknown = undefined;
   const contentType = res.headers.get("content-type") || "";
   const isJson = contentType.includes("application/json");
   if (isJson) {
     body = await res.json().catch(() => undefined);
+  }
+
+  logDev(`[ApiClient] ← ${res.status} ${res.statusText || ''} for ${url}`);
+  if (!res.ok) {
+    logDev(`[ApiClient] Response body:`, body);
   }
 
   if (!res.ok) {

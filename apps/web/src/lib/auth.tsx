@@ -134,42 +134,28 @@ export function AuthProvider({ children }: { readonly children: React.ReactNode 
       return { success: true };
     }
     try {
-      // Use new session API for cookie-based auth
-      const response = await fetch('/api/session', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ username, password }),
-      });
-
-      const data = await response.json();
-      
-      if (!response.ok || !data.success) {
-        // Extract error code and details for registration state handling
-        const errorCode = data.errors?.code;
-        const errorDetails = data.errors;
-        
-        return { 
-          success: false, 
-          error: data.message || "Login failed",
-          errorCode,
-          errorDetails 
+      // Call backend login via shared ApiV2 helper; handles cookies/tokens consistently
+      const res = await ApiV2.loginV2(username, password);
+      if (!res.success) {
+        return {
+          success: false,
+          error: res.error || "Login failed",
+          errorCode: res.errorCode,
+          errorDetails: res.errorDetails,
         };
       }
 
-      // Persist token on client as well so api.ts can attach Authorization header
-      if (data.token) {
+      if (res.token) {
         try {
           const { storeToken } = await import('./api');
-          storeToken(data.token);
+          storeToken(res.token);
         } catch (e) {
           console.warn('Failed to persist token on client:', e);
         }
       }
 
-      if (data.user) {
-        setUser(normalizeUser(data.user));
+      if (res.user) {
+        setUser(normalizeUser(res.user));
         return { success: true };
       }
 
@@ -214,10 +200,8 @@ export function AuthProvider({ children }: { readonly children: React.ReactNode 
       const { clearToken } = await import('./api');
       clearToken();
       
-      // Then call server logout (non-blocking)
-      await fetch('/api/session', {
-        method: 'DELETE',
-      });
+      // If there's a backend logout, call it best-effort (non-blocking for UX)
+      ApiV2.logout?.().catch(() => {});
     } catch (error) {
       console.error("Logout error:", error);
       // User is already logged out client-side, so this is non-critical

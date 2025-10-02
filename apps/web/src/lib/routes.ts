@@ -14,6 +14,10 @@ export const routes = {
     assistants: "/admin/assistants" as Route,
     settings: "/admin/settings" as Route,
     profile: "/admin/profile" as Route,
+    performance: "/admin/performance" as Route,
+    performanceHealth: "/admin/performance/health" as Route,
+    performanceMetrics: "/admin/performance/metrics" as Route,
+    performanceOptimization: "/admin/performance/optimization" as Route,
   },
   student: {
     index: "/student" as Route,

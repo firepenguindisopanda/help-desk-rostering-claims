@@ -3,12 +3,14 @@
  * Integrates with existing QueryClient
  */
 
+import { useEffect } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { scheduleApi } from '@/services/scheduleApi';
 import type {
   GenerateScheduleRequest,
   GenerateScheduleResponse,
+  CurrentScheduleResponse,
   SaveScheduleRequest,
   SaveScheduleResponse,
   ClearScheduleRequest,
@@ -17,7 +19,19 @@ import type {
   BatchAvailabilityResponse,
   RemoveStaffRequest,
   RemoveStaffResponse,
+  ScheduleSummaryResponse,
 } from '@/types/schedule';
+
+const IS_DEV = process.env.NODE_ENV !== 'production';
+
+function logScheduleDebug(message: string, payload?: unknown) {
+  if (!IS_DEV) return;
+  if (payload === undefined) {
+    console.debug(`[ScheduleQuery] ${message}`);
+    return;
+  }
+  console.debug(`[ScheduleQuery] ${message}`, payload);
+}
 
 // Query Keys - Centralized for consistency
 const scheduleKeysBase = ['schedule'] as const;
@@ -40,7 +54,7 @@ export const scheduleKeys = {
  * Hook to get current active schedule
  */
 export function useCurrentSchedule() {
-  return useQuery({
+  return useQuery<CurrentScheduleResponse>({
     queryKey: scheduleKeys.current(),
     queryFn: () => scheduleApi.getCurrentSchedule(),
     staleTime: 1000 * 60 * 2, // 2 minutes
@@ -68,7 +82,7 @@ export function useScheduleDetails(scheduleId: number, enabled = true) {
  * Hook to get schedule summary statistics
  */
 export function useScheduleSummary() {
-  return useQuery({
+  return useQuery<ScheduleSummaryResponse>({
     queryKey: scheduleKeys.summary(),
     queryFn: () => scheduleApi.getScheduleSummary(),
     staleTime: 1000 * 60 * 1, // 1 minute
@@ -374,6 +388,68 @@ export function useScheduleManagement() {
   const removeStaff = useRemoveStaffFromShift();
   const batchCheckAvailability = useBatchCheckAvailability();
   const optimistic = useOptimisticScheduleUpdate();
+
+  useEffect(() => {
+    if (!IS_DEV) return;
+    if (currentSchedule.data) {
+      logScheduleDebug('current schedule success', {
+        scheduleId: currentSchedule.data.schedule?.id,
+        type: currentSchedule.data.schedule?.type,
+        startDate: currentSchedule.data.schedule?.start_date,
+        endDate: currentSchedule.data.schedule?.end_date,
+        days: currentSchedule.data.schedule?.days?.length,
+      });
+    }
+  }, [currentSchedule.data]);
+
+  useEffect(() => {
+    if (!IS_DEV) return;
+    if (currentSchedule.error) {
+      const error = currentSchedule.error as {
+        message?: string;
+        status?: number;
+        statusCode?: number;
+        body?: unknown;
+        responseBody?: unknown;
+      } | undefined;
+      logScheduleDebug('current schedule error', {
+        message: error?.message,
+        status: error?.status ?? error?.statusCode,
+        body: error?.body ?? error?.responseBody,
+      });
+    }
+  }, [currentSchedule.error]);
+
+  useEffect(() => {
+    if (!IS_DEV) return;
+    if (summary.data) {
+      logScheduleDebug('schedule summary success', {
+        scheduleId: summary.data.summary.schedule_id,
+        totalShifts: summary.data.summary.total_shifts,
+        assignedShifts: summary.data.summary.assigned_shifts,
+        coverage: summary.data.summary.coverage_percentage,
+        generatedAt: summary.data.generated_at,
+      });
+    }
+  }, [summary.data]);
+
+  useEffect(() => {
+    if (!IS_DEV) return;
+    if (summary.error) {
+      const error = summary.error as {
+        message?: string;
+        status?: number;
+        statusCode?: number;
+        body?: unknown;
+        responseBody?: unknown;
+      } | undefined;
+      logScheduleDebug('schedule summary error', {
+        message: error?.message,
+        status: error?.status ?? error?.statusCode,
+        body: error?.body ?? error?.responseBody,
+      });
+    }
+  }, [summary.error]);
 
   const isLoading = currentSchedule.isLoading || summary.isLoading;
   const hasSchedule = !!currentSchedule.data?.schedule;

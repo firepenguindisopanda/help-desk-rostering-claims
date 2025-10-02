@@ -10,7 +10,8 @@ import {
   LogOut,
   Menu,
   X,
-  Calendar
+  Calendar,
+  TrendingUp
 } from "lucide-react";
 import { toast } from "sonner";
 import Link from "next/link";
@@ -32,6 +33,7 @@ export function AdminLayout({ children }: AdminLayoutProps) {
   const navigation = [
     { name: "Dashboard", href: routes.admin.index, icon: BarChart3 },
     { name: "Schedule", href: routes.admin.schedule, icon: Calendar },
+    { name: "Performance", href: routes.admin.performance, icon: TrendingUp },
     { name: "Profile", href: "/admin/profile", icon: Settings },
     { name: "Time Tracking", href: "#soon:time", icon: Users },
     { name: "Staff Reports", href: "#soon:reports", icon: Shield },

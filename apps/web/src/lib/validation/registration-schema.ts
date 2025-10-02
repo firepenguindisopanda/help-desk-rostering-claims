@@ -6,11 +6,11 @@ const availabilitySlotSchema = z.object({
   end_time: z.string().regex(/^\d{2}:\d{2}:\d{2}$/, "Invalid time format")
 });
 
-const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB
+const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB (kept for backward compatibility if needed)
 const ACCEPTED_IMAGE_TYPES = ["image/jpeg", "image/jpg", "image/png", "image/webp"];
 const ACCEPTED_DOCUMENT_TYPES = ["application/pdf", "application/msword", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"];
 
-export const registrationSchema = z.object({
+export const registrationSchemaFields = {
   student_id: z.string().min(1, "Student ID is required"),
   name: z.string().min(1, "Full name is required"),
   email: z.string().min(1, "Email is required").refine((email) => {
@@ -45,7 +45,11 @@ export const registrationSchema = z.object({
   }, {
     message: "Transcript is required (max 5MB, PDF/DOC/DOCX only)"
   })
-}).refine(data => data.password === data.confirm_password, {
+} as const;
+
+export const registrationSchemaCore = z.object(registrationSchemaFields);
+
+export const registrationSchema = registrationSchemaCore.refine(data => data.password === data.confirm_password, {
   message: "Passwords don't match",
   path: ["confirm_password"]
 });

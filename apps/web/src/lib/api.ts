@@ -9,9 +9,15 @@ export type ApiResponse<T> = {
 
 const API_BASE_URL = (process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:5000/api/v2").replace(/\/$/, "");
 const COOKIE_NAME = process.env.NEXT_PUBLIC_AUTH_COOKIE_NAME || "access_token"; // Changed to match backend expectation
+const LOCAL_STORAGE_KEYS = ["authToken", "access_token", "auth_token"];
+const IS_DEV = process.env.NODE_ENV !== "production";
+
+function isBrowser(): boolean {
+  return typeof window !== "undefined" && typeof document !== "undefined";
+}
 
 function getCookie(name: string): string | null {
-  if (typeof document === "undefined") return null;
+  if (!isBrowser()) return null;
   const parts = document.cookie ? document.cookie.split("; ") : [];
   for (const part of parts) {
     const eqIndex = part.indexOf("=");
@@ -24,17 +30,34 @@ function getCookie(name: string): string | null {
 }
 
 function setCookie(name: string, value: string, maxAgeSeconds = 60 * 60 * 24 * 7) {
-  if (typeof document === "undefined") return;
+  if (!isBrowser()) return;
   document.cookie = `${name}=${encodeURIComponent(value)}; Path=/; Max-Age=${maxAgeSeconds}; SameSite=Lax`;
 }
 
 function deleteCookie(name: string) {
-  if (typeof document === "undefined") return;
+  if (!isBrowser()) return;
   document.cookie = `${name}=; Path=/; Max-Age=0; SameSite=Lax`;
 }
 
 export function getToken(): string | null {
-  // Prefer access_token, but also check legacy name auth_token
+  let token: string | null = null;
+
+  if (isBrowser()) {
+    for (const key of LOCAL_STORAGE_KEYS) {
+      try {
+        token = window.localStorage.getItem(key);
+      } catch {
+        token = null;
+      }
+      if (token) break;
+    }
+  }
+
+  if (token) {
+    return token;
+  }
+
+  // Fallback to cookies for backwards compatibility
   return getCookie('access_token') || getCookie(COOKIE_NAME) || getCookie('auth_token');
 }
 
@@ -42,12 +65,27 @@ export function storeToken(token: string) {
   setCookie(COOKIE_NAME, token);
   // Also set the access_token cookie that the backend expects
   setCookie("access_token", token);
+
+  if (isBrowser()) {
+    try {
+      window.localStorage.setItem("authToken", token);
+      window.localStorage.setItem("access_token", token);
+    } catch {}
+  }
 }
 
 export function clearToken() {
   deleteCookie(COOKIE_NAME);
   // Also clear the access_token cookie
   deleteCookie("access_token");
+
+  if (isBrowser()) {
+    for (const key of LOCAL_STORAGE_KEYS) {
+      try {
+        window.localStorage.removeItem(key);
+      } catch {}
+    }
+  }
 }
 
 export async function apiFetch<T>(path: string, init: RequestInit = {}): Promise<Response> {
@@ -60,6 +98,12 @@ export async function apiFetch<T>(path: string, init: RequestInit = {}): Promise
 
   const isFormData = typeof FormData !== "undefined" && init.body instanceof FormData;
 
+  if (IS_DEV) {
+    const method = init.method || "GET";
+    // Avoid logging full tokens – only indicate their presence
+    console.debug(`[apiFetch] → ${method} ${url} | token: ${token ? 'present' : 'missing'}`);
+  }
+
   const headers: HeadersInit = {
     ...(init.headers || {}),
     ...(token ? { Authorization: `Bearer ${token}` } : {}),
@@ -67,11 +111,36 @@ export async function apiFetch<T>(path: string, init: RequestInit = {}): Promise
     ...(!isFormData && init.body ? { "Content-Type": "application/json" } : {}),
   };
 
-  return fetch(url, {
-    ...init,
-    headers,
-    credentials: "include", // Changed from "omit" to include cookies
-  });
+  try {
+    const response = await fetch(url, {
+      ...init,
+      headers,
+      credentials: "include", // Changed from "omit" to include cookies
+    });
+
+    if (IS_DEV) {
+      console.debug(`[apiFetch] ← ${response.status} ${response.statusText || ''} for ${url}`);
+      if (!response.ok) {
+        console.debug(`[apiFetch] Response headers:`, Object.fromEntries(response.headers.entries()));
+        void response
+          .clone()
+          .text()
+          .then((body) => {
+            console.debug(`[apiFetch] Response body:`, body);
+          })
+          .catch((err) => {
+            console.debug(`[apiFetch] Failed to read response body`, err);
+          });
+      }
+    }
+
+    return response;
+  } catch (error) {
+    if (IS_DEV) {
+      console.error(`[apiFetch] ✖ Request failed for ${url}`, error);
+    }
+    throw error;
+  }
 }
 
 // Extended error response type for login
@@ -251,13 +320,14 @@ export async function getCourses() {
   return res.json().catch(() => ({}));
 }
 
-// Updated register function to support FormData
-export async function registerAssistant(formData: FormData): Promise<{ success: boolean; error?: string; message?: string; errors?: Record<string, unknown> }> {
+// Updated register function to support JSON data with file URLs
+export async function registerAssistant(registrationData: any): Promise<{ success: boolean; error?: string; message?: string; errors?: Record<string, unknown> }> {
   try {
     const res = await fetch(`${API_BASE_URL}/auth/register`, {
       method: "POST",
-      body: formData,
+      body: JSON.stringify(registrationData),
       headers: {
+        'Content-Type': 'application/json',
         ...(getToken() ? { Authorization: `Bearer ${getToken()}` } : {}),
       },
       credentials: "include",
@@ -282,28 +352,23 @@ export async function registerAssistant(formData: FormData): Promise<{ success: 
 import axios from 'axios';
 
 export async function registerAssistantWithProgress(
-  formData: FormData, 
+  registrationData: any, 
   onUploadProgress?: (progressEvent: { loaded: number; total?: number; progress?: number }) => void
 ): Promise<{ success: boolean; error?: string; message?: string; errors?: Record<string, unknown> }> {
   try {
-    const response = await axios.post(`${API_BASE_URL}/auth/register`, formData, {
+    // Since files are already uploaded to UploadThing, we don't need progress tracking
+    // But we keep the function signature for compatibility
+    const response = await axios.post(`${API_BASE_URL}/auth/register`, registrationData, {
       headers: {
-        'Content-Type': 'multipart/form-data',
+        'Content-Type': 'application/json',
         ...(getToken() ? { Authorization: `Bearer ${getToken()}` } : {}),
       },
-      onUploadProgress: (progressEvent) => {
-        if (onUploadProgress) {
-          const progress = progressEvent.total 
-            ? Math.round((progressEvent.loaded * 100) / progressEvent.total)
-            : 0;
-          onUploadProgress({
-            loaded: progressEvent.loaded,
-            total: progressEvent.total,
-            progress
-          });
-        }
-      },
     });
+    
+    // Simulate progress completion since files are already uploaded
+    if (onUploadProgress) {
+      onUploadProgress({ loaded: 100, total: 100, progress: 100 });
+    }
     
     const data = response.data;
     if (response.status >= 400 || data.success === false) {

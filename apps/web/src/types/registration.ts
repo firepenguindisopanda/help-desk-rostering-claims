@@ -21,8 +21,8 @@ export interface RegistrationFormData {
   terms: boolean;            // Must be true
   courses: string[];         // Array of course codes
   availability: AvailabilitySlot[]; // Array of availability slots
-  profile_picture: File | null;     // Required file upload
-  transcript: File | null;          // Required file upload
+  profile_picture: File | null;     // Required file to be uploaded on submit
+  transcript: File | null;          // Required file to be uploaded on submit
 }
 
 export interface RegistrationApiResponse {
